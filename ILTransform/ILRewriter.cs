@@ -3,7 +3,9 @@
 
 using System;
 using System.Diagnostics;
+using System.Reflection;
 using System.Reflection.Metadata.Ecma335;
+using System.Runtime.InteropServices;
 using System.Security.Authentication.ExtendedProtection;
 using System.Text;
 
@@ -134,8 +136,8 @@ namespace ILTransform
                         {
                             lines[lineIndex] = ReplaceIdent(line, "Main", "TestEntryPoint");
                             lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
-                            rewritten = true;
                         }
+                        rewritten = true;
                     }
 
                     if (!_cleanupILModuleAssembly)
@@ -362,7 +364,7 @@ namespace ILTransform
                             {
                                 if (s != i)
                                 {
-                                    lines[s] = TestProject.ReplaceIdentifier(lines[s], className!, qualifiedClassName);
+                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, IdentKind.Type);
                                 }
                             }
                         }
@@ -376,7 +378,7 @@ namespace ILTransform
                     {
                         for (int lineIndex = _testProject.NamespaceLine; lineIndex < lines.Count; lineIndex++)
                         {
-                            lines[lineIndex] = TestProject.ReplaceIdentifier(lines[lineIndex], _testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName);
+                            lines[lineIndex] = ReplaceIdent(lines[lineIndex], _testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName, IdentKind.Namespace);
                         }
                     }
                     else
@@ -390,6 +392,10 @@ namespace ILTransform
                 {
                     bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines[_testProject.LastUsingLine].Contains("Xunit"));
                     int rewriteLine = _testProject.LastUsingLine;
+                    if (rewriteLine == -1)
+                    {
+                        rewriteLine = _testProject.LastHeaderCommentLine;
+                    }
                     rewriteLine++;
                     if (!usingXUnit)
                     {
@@ -492,26 +498,40 @@ namespace ILTransform
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));
             bool rewritten = false;
+            bool hasRequiresProcessIsolation = _testProject.HasRequiresProcessIsolation;
+
             for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
             {
                 string line = lines[lineIndex];
+
+                // Add RequiresProcessIsolation to first PropertyGroup.
+                // Do this before the OutputType removal, which might remove the first PropertyGroup.
+                if (_addProcessIsolation && _testProject.NeedsRequiresProcessIsolation && !hasRequiresProcessIsolation)
+                {
+                    if (lines.Contains("<PropertyGroup"))
+                    {
+                        int indent = TestProject.GetIndent(line);
+                        int nextIndent = TestProject.GetIndent(lines[lineIndex + 1]);
+                        string modelLine = (nextIndent > indent) ? lines[lineIndex + 1] : "  " + line;
+                        // "+ 1" to add after the line.  Then "- 1" to reset to the last inserted line
+                        // so that the loop's lineIndex++ puts us after the insertion.
+                        lineIndex = InsertIndentedLines(lines, lineIndex + 1, s_processIsolationLines, modelLine) - 1;
+                        rewritten = true;
+                        continue;
+                    }
+                }
+
                 const string outputTypeTag = "<OutputType>Exe</OutputType>";
                 bool containsOutputType = line.Contains(outputTypeTag);
                 if (_addILFactAttributes && containsOutputType)
                 {
                     lines.RemoveAt(lineIndex--);
-                    rewritten = true;
-                    continue;
-                }
-
-                // Assume that any CLRTestTargetUnsupported annotation is relevant
-                // (that we're not seeing something like
-                // <CLRTestTargetUnsupported>false</CLRTestTargetUnsupported>)
-                const string unsupportedTag = "<CLRTestTargetUnsupported";
-                bool containsUnsupportedTag = line.Contains(unsupportedTag);
-                if (_addProcessIsolation && containsUnsupportedTag)
-                {
-                    lineIndex = InsertIndentedLines(lines, lineIndex, s_processIsolationLines, line);
+                    if ((lines[lineIndex].Trim() == "<PropertyGroup>")
+                        && (lines[lineIndex + 1].Trim() == "</PropertyGroup>"))
+                    {
+                        lines.RemoveAt(lineIndex);
+                        lines.RemoveAt(lineIndex--);
+                    }
                     rewritten = true;
                     continue;
                 }
@@ -533,45 +553,214 @@ namespace ILTransform
             }
         }
 
-        private static string ReplaceIdent(string source, string searchIdent, string replaceIdent)
+        private enum IdentKind
         {
-            StringBuilder builder = new StringBuilder();
-            for (int index = 0; index < source.Length;)
+            Namespace,
+            Type,
+            Other
+        }
+
+        private enum TokenKind
+        {
+            _Illegal,
+            WhiteSpace,
+            Comment,
+            Quoted,
+            Identifier,
+            Other
+        }
+
+        private bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index == 3)
+            && kinds[0] == TokenKind.Other && tokens[0] == "."
+            && kinds[1] == TokenKind.Identifier && tokens[1] == "namespace"
+            && kinds[2] == TokenKind.WhiteSpace;
+
+        private bool IsNamespacePrefix(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index + 2 < tokens.Count)
+            && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "."
+            && kinds[index + 2] == TokenKind.Identifier;
+
+        private bool IsClassPrefix(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index + 2 < tokens.Count)
+            && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "::"
+            && kinds[index + 2] == TokenKind.Identifier;
+
+        private bool IsClassName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index - 2 >= 0)
+            && kinds[index - 2] == TokenKind.Identifier && (tokens[index - 2] == "class" || tokens[index - 2] == "valuetype")
+            && kinds[index - 1] == TokenKind.WhiteSpace;
+
+        private bool IsMethodName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index + 1 < tokens.Count)
+            && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "(";
+
+        private bool IsLdTokenType(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index - 2 >= 0)
+            && kinds[index - 2] == TokenKind.Identifier && tokens[index - 2] == "ldtoken"
+            && kinds[index - 1] == TokenKind.WhiteSpace;
+
+        private bool IsImplements(List<string> tokens, List<TokenKind> kinds, int index)
+        {
+            while (--index >= 0)
             {
-                char c = source[index];
+                if ((kinds[index] == TokenKind.Identifier) && (tokens[index] == "implements"))
+                {
+                    return true;
+                }
+
+                if (kinds[index] == TokenKind.Identifier
+                    || kinds[index] == TokenKind.WhiteSpace
+                    || (kinds[index] == TokenKind.Other && tokens[index] == ","))
+                    continue;
+
+                break;
+            }
+
+            return false;
+        }
+
+        private List<(string, TokenKind)> SpecialTokens = new List<(string, TokenKind)>()
+        {
+            (".ctor", TokenKind.Identifier),
+            ("::", TokenKind.Other),
+        };
+
+        private string ReplaceIdent(string source, string searchIdent, string replaceIdent, IdentKind searchKind = IdentKind.Other)
+        {
+            if (!source.Contains(searchIdent))
+            {
+                return source;
+            }
+
+            var tokens = new List<string>();
+            var kinds = new List<TokenKind>();
+
+            for (int index = 0, next; index < source.Length; index = next)
+            {
+                next = index;
+                TokenKind kind = TokenKind._Illegal;
+
+                char c = source[next];
                 if (c == '\"')
                 {
-                    builder.Append(c);
-                    while (++index < source.Length && source[index] != '\"')
+                    while (++next < source.Length && source[next] != '\"')
                     {
-                        builder.Append(source[index]);
+                        // nothing
                     }
-                    if (index < source.Length)
+                    // next is " or end of line
+                    if (next < source.Length)
                     {
-                        builder.Append(source[index++]);
+                        next++;
                     }
+                    kind = TokenKind.Quoted;
                 }
-                else if (c == '/' && index + 1 < source.Length && source[index + 1] == '/')
+                else if (c == '/' && next + 1 < source.Length && source[next + 1] == '/')
                 {
                     // Comment - copy over rest of line
-                    builder.Append(source, index, source.Length - index);
-                    break;
+                    next = source.Length;
+                    kind = TokenKind.Comment;
                 }
-                else if (!TestProject.IsIdentifier(c))
+                else if (char.IsWhiteSpace(c))
                 {
-                    builder.Append(c);
-                    index++;
+                    while (++next < source.Length && char.IsWhiteSpace(source[next]))
+                    {
+                        // nothing
+                    }
+                    kind = TokenKind.WhiteSpace;
                 }
                 else
                 {
-                    int start = index;
-                    while (index < source.Length && TestProject.IsIdentifier(source[index]))
+                    var special = SpecialTokens.FirstOrDefault(
+                        candidate => next + candidate.Item1.Length <= source.Length
+                        && MemoryExtensions.Equals(source.AsSpan(next, candidate.Item1.Length), candidate.Item1.AsSpan(0), StringComparison.Ordinal));
+                    if (special.Item1 != null)
                     {
-                        index++;
+                        next += special.Item1.Length;
+                        kind = special.Item2;
                     }
-                    string ident = source.Substring(start, index - start);
-                    builder.Append(ident == searchIdent ? replaceIdent : ident);
                 }
+
+                if (next == index)
+                {
+                    if (!TestProject.IsIdentifier(c))
+                    {
+                        while (++next < source.Length && !TestProject.IsIdentifier(source[next]) && !char.IsWhiteSpace(source[next]))
+                        {
+                            // nothing
+                        }
+                        kind = TokenKind.Other;
+                    }
+                    else
+                    {
+                        while (++next < source.Length && TestProject.IsIdentifier(source[next]))
+                        {
+                            // nothing
+                        }
+                        kind = TokenKind.Identifier;
+                    }
+                }
+
+                tokens.Add(source.Substring(index, next - index));
+                kinds.Add(kind);
+            }
+
+            var builder = new StringBuilder();
+            for (int i = 0; i < tokens.Count; ++i)
+            {
+                string token = tokens[i];
+                if (kinds[i] == TokenKind.Identifier)
+                {
+                    if (token == searchIdent)
+                    {
+                        bool replace = true;
+                        if (searchKind == IdentKind.Namespace)
+                        {
+                            if (IsNamespaceDeclName(tokens, kinds, i)
+                                || IsNamespacePrefix(tokens, kinds, i))
+                            {
+                                // good
+                            }
+                            else
+                            {
+                                Console.WriteLine("{0}: Couldn't determine token kind of token #{1}={2} in",
+                                    _testProject.AbsolutePath, i, token);
+                                Console.WriteLine(source);
+                                replace = false;
+                            }
+                        }
+                        else if (searchKind == IdentKind.Type)
+                        {
+                            if (IsClassPrefix(tokens, kinds, i)
+                                || IsClassName(tokens, kinds, i)
+                                || IsImplements(tokens, kinds, i)
+                                || IsLdTokenType(tokens, kinds, i))
+                            {
+                                // good
+                            }
+                            else if (IsNamespacePrefix(tokens, kinds, i)
+                                || IsMethodName(tokens, kinds, i))
+                            {
+                                replace = false;
+                            }
+                            else
+                            {
+                                Console.WriteLine("{0}: Couldn't determine token kind of token #{1}={2} in",
+                                    _testProject.AbsolutePath, i, token);
+                                Console.WriteLine(source);
+                                replace = false;
+                            }
+                        }
+
+                        if (replace)
+                        {
+                            builder.Append(replaceIdent);
+                            continue;
+                        }
+                    }
+                }
+
+                builder.Append(token);
             }
             return builder.ToString();
         }

@@ -11,7 +11,7 @@ namespace ILTransform
         {
             try
             {
-                string testRoot = "";
+                List<string> testRoots = new List<string>();
                 bool deduplicateClassNames = false;
                 bool deduplicateProjectNames = false;
                 string classToDeduplicate = "";
@@ -68,17 +68,17 @@ namespace ILTransform
                     }
                     else
                     {
-                        testRoot = arg;
+                        testRoots.Add(arg);
                     }
                 }
 
 
-                if (testRoot == "")
+                if (testRoots.Count() == 0)
                 {
                     throw new Exception("Usage: ILTransform <test source root, e.g. d:\\git\\runtime\\src\\tests> [-d]");
                 }
 
-                string wrapperRoot = Path.Combine(testRoot, "generated", "wrappers");
+                string wrapperRoot = Path.Combine(testRoots[0], "generated", "wrappers");
                 string logPath = Path.Combine(wrapperRoot, "wrapper.log");
                 Directory.CreateDirectory(wrapperRoot);
                 foreach (string file in Directory.GetFiles(wrapperRoot))
@@ -88,7 +88,7 @@ namespace ILTransform
 
                 TestProjectStore testStore = new TestProjectStore();
                 testStore.AddCommonClassName("My");
-                testStore.ScanTree(testRoot);
+                testStore.ScanTrees(testRoots);
                 testStore.GenerateExternAliases();
 
                 using (StreamWriter log = new StreamWriter(logPath))

@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection.Metadata;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Xml;
 
 namespace ILTransform
@@ -60,10 +61,12 @@ namespace ILTransform
         public readonly string RelativePath;
         public readonly string OutputType;
         public readonly string CLRTestKind;
+        public readonly string Priority;
         public readonly string CLRTestProjectToRun;
         public readonly string CLRTestExecutionArguments;
         public readonly DebugOptimize DebugOptimize;
-        public readonly string Priority;
+        public readonly bool HasRequiresProcessIsolation;
+        public readonly bool NeedsRequiresProcessIsolation;
         public readonly string[] CompileFiles;
         public readonly string[] ProjectReferences;
         public readonly string TestClassName;
@@ -72,10 +75,10 @@ namespace ILTransform
         public readonly string TestClassSourceFile;
         public readonly int TestClassLine;
         public readonly int MainMethodLine;
+        public readonly int LastHeaderCommentLine; // will include one blank after comments if it exists
         public readonly int LastUsingLine;
         public readonly int NamespaceLine;
         public readonly bool HasFactAttribute;
-        public readonly bool IsFake;
         public readonly Dictionary<string, string> AllProperties;
 
         public readonly bool IsILProject;
@@ -83,24 +86,6 @@ namespace ILTransform
         public string? TestProjectAlias;
         public string? DeduplicatedClassName;
         public string? DeduplicatedNamespaceName;
-
-        // A fake TestProject used to cause duplicate logic to fire
-        public TestProject(string testClassName)
-            : this(absolutePath: "fake",
-                relativePath: "fake",
-                allProperties: new Dictionary<string, string>() { ["DebugType"] = "*", ["Optimize"] = "*" },
-                compileFiles: new string[0],
-                projectReferences: new string[0],
-                testClassName: testClassName,
-                testClassBases: new string[0],
-                testClassNamespace: "fake",
-                testClassSourceFile: "fake",
-                testClassLine: -1,
-                mainMethodLine: -1,
-                lastUsingLine: -1,
-                namespaceLine: -1,
-                hasFactAttribute: false,
-                isFake : true) {}
 
         public TestProject(
             string absolutePath,
@@ -114,10 +99,10 @@ namespace ILTransform
             string testClassSourceFile,
             int testClassLine,
             int mainMethodLine,
+            int lastHeaderCommentLine,
             int lastUsingLine,
             int namespaceLine,
-            bool hasFactAttribute,
-            bool isFake = false)
+            bool hasFactAttribute)
         {
             AbsolutePath = absolutePath;
             RelativePath = relativePath;
@@ -125,7 +110,8 @@ namespace ILTransform
 
             OutputType = GetProperty("OutputType");
             CLRTestKind = GetProperty("CLRTestKind");
-            CLRTestProjectToRun = isFake ? "" : SanitizeFileName(GetProperty("CLRTestProjectToRun"), AbsolutePath);
+            Priority = GetProperty("CLRTestPriority");
+            CLRTestProjectToRun = SanitizeFileName(GetProperty("CLRTestProjectToRun"), AbsolutePath);
             CLRTestExecutionArguments = GetProperty("CLRTestExecutionArguments");
             string debugType = InitCaps(GetProperty("DebugType"));
             string optimize = InitCaps(GetProperty("Optimize"));
@@ -134,7 +120,16 @@ namespace ILTransform
                 optimize = "False";
             }
             DebugOptimize = new DebugOptimize(debugType, optimize);
-            Priority = GetProperty("CLRTestPriority");
+            string? requiresProcessIsolation = GetProperty("RequiresProcessIsolation", null);
+            if (requiresProcessIsolation == "true")
+            {
+                HasRequiresProcessIsolation = true;
+            }
+            else if (requiresProcessIsolation != null)
+            {
+                Console.WriteLine("New value {0} for RequiresProcessIsolation in {1}", requiresProcessIsolation, AbsolutePath);
+            }
+            NeedsRequiresProcessIsolation = HasProperty("CLRTestTargetUnsupported") || HasProperty("UnloadabilityIncompatible");
 
             CompileFiles = compileFiles;
             ProjectReferences = projectReferences;
@@ -144,10 +139,10 @@ namespace ILTransform
             TestClassSourceFile = testClassSourceFile;
             TestClassLine = testClassLine;
             MainMethodLine = mainMethodLine;
+            LastHeaderCommentLine = lastHeaderCommentLine;
             LastUsingLine = lastUsingLine;
             NamespaceLine = namespaceLine;
             HasFactAttribute = hasFactAttribute;
-            IsFake = isFake;
 
             IsILProject = Path.GetExtension(RelativePath).ToLower() == ".ilproj";
         }
@@ -157,42 +152,45 @@ namespace ILTransform
             return char.IsDigit(c) || char.IsLetter(c) || c == '_' || c == '@' || c == '$';
         }
 
+        private static Regex PublicRegex = new Regex(@"public\s+");
+        private static Regex NotPublicRegex = new Regex(@"(?:private|internal)(?<ws>\s+)");
+
         public static bool MakePublic(bool isILTest, ref string line, bool force)
         {
-            if (!line.Contains("public "))
+            if (PublicRegex.IsMatch(line))
             {
-                if (line.Contains("private "))
+                return false;
+            }
+
+            string replacedLine = NotPublicRegex.Replace(line, match => "public" + match.Groups["ws"]);
+            if (!object.ReferenceEquals(line, replacedLine))
+            {
+                line = replacedLine;
+                return true;
+            }
+
+            if (force)
+            {
+                int charIndex = 0;
+                while (charIndex < line.Length && char.IsWhiteSpace(line[charIndex]))
                 {
-                    line = line.Replace("private ", "public ");
-                    return true;
+                    charIndex++;
                 }
-                else if (line.Contains("internal "))
+                if (isILTest)
                 {
-                    line = line.Replace("internal ", "public ");
-                    return true;
-                }
-                else if (force)
-                {
-                    int charIndex = 0;
-                    while (charIndex < line.Length && char.IsWhiteSpace(line[charIndex]))
+                    while (charIndex < line.Length && !char.IsWhiteSpace(line[charIndex]))
                     {
                         charIndex++;
                     }
-                    if (isILTest)
+                    if (charIndex < line.Length)
                     {
-                        while (charIndex < line.Length && !char.IsWhiteSpace(line[charIndex]))
-                        {
-                            charIndex++;
-                        }
-                        if (charIndex < line.Length)
-                        {
-                            charIndex++;
-                        }
+                        charIndex++;
                     }
-                    line = string.Concat(line.AsSpan(0, charIndex), "public ", line.AsSpan(charIndex));
-                    return true;
                 }
+                line = string.Concat(line.AsSpan(0, charIndex), "public ", line.AsSpan(charIndex));
+                return true;
             }
+
             return false;
         }
 
@@ -435,9 +433,9 @@ namespace ILTransform
         }
 
         private string GetProperty(string name, string defaultValue = "")
-        {
-            return AllProperties.TryGetValue(name, out string? property) ? property : defaultValue;
-        }
+            => AllProperties.TryGetValue(name, out string? property) ? property : defaultValue;
+
+        private bool HasProperty(string name) => AllProperties.ContainsKey(name);
 
         private static string SanitizeFileName(string fileName, string projectPath)
         {
@@ -468,6 +466,7 @@ namespace ILTransform
         private readonly List<TestProject> _projects;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _namespaceNameMap;
+        private readonly HashSet<string> _commonClassNames;
         private readonly HashSet<string> _rewrittenFiles;
 
         public TestProjectStore()
@@ -475,13 +474,11 @@ namespace ILTransform
             _projects = new List<TestProject>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _namespaceNameMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
+            _commonClassNames = new HashSet<string>();
             _rewrittenFiles = new HashSet<string>();
         }
 
-        public void AddCommonClassName(string className)
-        {
-            AddToMultiMap(_classNameMap, className, new TestProject(className));
-        }
+        public void AddCommonClassName(string className) => _commonClassNames.Add(className);
 
         private void AddToMultiMap<TKey>(
             Dictionary<TKey, List<TestProject>> multiMap,
@@ -497,11 +494,14 @@ namespace ILTransform
             projectList!.Add(project);
         }
 
-        public void ScanTree(string rootPath)
+        public void ScanTrees(IReadOnlyList<string> rootPaths)
         {
             int projectCount = 0;
             Stopwatch sw = Stopwatch.StartNew();
-            ScanRecursive(rootPath, "", ref projectCount);
+            foreach (string rootPath in rootPaths)
+            {
+                ScanRecursive(rootPath, "", ref projectCount);
+            }
             PopulateClassNameMap();
             Console.WriteLine("Done scanning {0} projects in {1} msecs", projectCount, sw.ElapsedMilliseconds);
         }
@@ -522,6 +522,9 @@ namespace ILTransform
             "AllowUnsafeBlocks",
             "DebugType",
             "Optimize",
+            "RequiresProcessIsolation",
+            "CLRTestTargetUnsupported",
+            "UnloadabilityIncompatible",
         };
 
         public void DumpFolderStatistics(TextWriter writer)
@@ -577,7 +580,7 @@ namespace ILTransform
                         kvp.Value.Pri1,
                         kvp.Value.Fact,
                         kvp.Value.ILProj,
-                        kvp.Value.Pri1 - kvp.Value.Fact,
+                        kvp.Value.Total - kvp.Value.Fact,
                         kvp.Key,
                         props);
                 }
@@ -897,6 +900,7 @@ namespace ILTransform
 
         public void RewriteAllTests(bool deduplicateClassNames, string classToDeduplicate, bool addProcessIsolation, bool addILFactAttributes, bool cleanupILModuleAssembly)
         {
+            Stopwatch sw = Stopwatch.StartNew();
             HashSet<string> classNameDuplicates = new HashSet<string>(_classNameMap.Where(kvp => kvp.Value.Count > 1).Select(kvp => kvp.Key));
 
             int index = 0;
@@ -920,6 +924,7 @@ namespace ILTransform
                     Console.WriteLine("Rewritten {0} / {1} projects", index, _projects.Count);
                 }
             }
+            Console.WriteLine("Done rewriting {0} projects in {1} msecs", _projects.Count, sw.ElapsedMilliseconds);
         }
 
         public void UnifyDbgRelProjects()
@@ -1321,6 +1326,7 @@ namespace ILTransform
             string testClassSourceFile = "";
             int testClassLine = -1;
             int mainMethodLine = -1;
+            int lastHeaderCommentLine = -1;
             int lastUsingLine = -1;
             int namespaceLine = -1;
             bool hasFactAttribute = false;
@@ -1336,6 +1342,7 @@ namespace ILTransform
                         testClassSourceFile: ref testClassSourceFile,
                         testClassLine: ref testClassLine,
                         mainMethodLine: ref mainMethodLine,
+                        lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
                         hasFactAttribute: ref hasFactAttribute);
@@ -1358,6 +1365,7 @@ namespace ILTransform
                 testClassSourceFile: testClassSourceFile,
                 testClassLine: testClassLine,
                 mainMethodLine: mainMethodLine,
+                lastHeaderCommentLine: lastHeaderCommentLine,
                 lastUsingLine: lastUsingLine,
                 namespaceLine: namespaceLine,
                 hasFactAttribute: hasFactAttribute));
@@ -1371,6 +1379,7 @@ namespace ILTransform
             ref string testClassSourceFile,
             ref int testClassLine,
             ref int mainMethodLine,
+            ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
             ref bool hasFactAttribute)
@@ -1386,6 +1395,7 @@ namespace ILTransform
                     testClassSourceFile: ref testClassSourceFile,
                     testClassLine: ref testClassLine,
                     mainMethodLine: ref mainMethodLine,
+                    lastHeaderCommentLine: ref lastHeaderCommentLine,
                     lastUsingLine: ref lastUsingLine,
                     namespaceLine: ref namespaceLine,
                     hasFactAttribute: ref hasFactAttribute);
@@ -1416,6 +1426,7 @@ namespace ILTransform
                     testClassSourceFile: ref testClassSourceFile,
                     testClassLine: ref testClassLine,
                     mainMethodLine: ref mainMethodLine,
+                    lastHeaderCommentLine: ref lastHeaderCommentLine,
                     lastUsingLine: ref lastUsingLine,
                     namespaceLine: ref namespaceLine,
                     hasFactAttribute: ref hasFactAttribute);
@@ -1430,6 +1441,7 @@ namespace ILTransform
             ref string testClassSourceFile,
             ref int testClassLine,
             ref int mainMethodLine,
+            ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
             ref bool hasFactAttribute)
@@ -1445,6 +1457,7 @@ namespace ILTransform
                         testClassSourceFile: ref testClassSourceFile,
                         testClassLine: ref testClassLine,
                         mainMethodLine: ref mainMethodLine,
+                        lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
                         hasFactAttribute: ref hasFactAttribute);
@@ -1459,6 +1472,7 @@ namespace ILTransform
                         testClassSourceFile: ref testClassSourceFile,
                         testClassLine: ref testClassLine,
                         mainMethodLine: ref mainMethodLine,
+                        lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
                         hasFactAttribute: ref hasFactAttribute);
@@ -1488,6 +1502,7 @@ namespace ILTransform
             ref string testClassSourceFile,
             ref int testClassLine,
             ref int mainMethodLine,
+            ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
             ref bool hasFactAttribute)
@@ -1630,7 +1645,28 @@ namespace ILTransform
 
             if (isMainFile)
             {
-                lastUsingLine = 0;
+                {
+                    lastHeaderCommentLine = -1;
+                    int lineIndex;
+                    for (lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+                    {
+                        string line = lines[lineIndex].TrimStart();
+                        if (!line.StartsWith("//"))
+                        {
+                            break;
+                        }
+                        lastHeaderCommentLine = lineIndex;
+                    }
+                    if (lineIndex < lines.Count)
+                    {
+                        if (string.IsNullOrWhiteSpace(lines[lineIndex]))
+                        {
+                            lastHeaderCommentLine = lineIndex;
+                        }
+                    }
+                }
+
+                lastUsingLine = -1;
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
                     string line = lines[lineIndex];
@@ -1643,7 +1679,7 @@ namespace ILTransform
                 for (int lineIndex = lastUsingLine + 1; lineIndex < lines.Count; lineIndex++)
                 {
                     string line = lines[lineIndex].Trim();
-                    if (line == "")
+                    if (line == "" || line.StartsWith("//"))
                     {
                         continue;
                     }
@@ -1671,6 +1707,7 @@ namespace ILTransform
             ref string testClassSourceFile,
             ref int testClassLine,
             ref int mainMethodLine,
+            ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
             ref bool hasFactAttribute)
@@ -1814,12 +1851,14 @@ namespace ILTransform
                 }
             }
 
+            /*
             foreach (List<TestProject> projectList in _classNameMap.Values.Where(v => v.Count > 1))
             {
                 var found = new HashSet<DebugOptimize>();
                 bool doDedup = false;
                 foreach (TestProject project in projectList)
                 {
+                    // No longer using "*" for "fake" - instead should check _commonClassNames if trying to use this again
                     if (project.DebugOptimize.Debug == "*" || !found.Add(project.DebugOptimize))
                     {
                        doDedup = true;
@@ -1835,10 +1874,13 @@ namespace ILTransform
                     }
                 }
             }
+            */
 
             HashSet<TestProject> ilProjects = new HashSet<TestProject>(_projects.Where(prj => prj.IsILProject));
 
-            foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _namespaceNameMap.Values.Where(dict => dict.Values.Any(l => l.Count > 1)))
+            foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _namespaceNameMap.Values.Where(
+                dict => dict.Values.Any(l => l.Count > 1 || l.Any(p => _commonClassNames.Contains(p.TestClassName)))
+                ))
             {
                 if (debugOptProjectMap.Values.Any(prjList => prjList.Any(prj => prj.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum"))))
                 {
