@@ -42,7 +42,7 @@ bool inQuote = false; // assume Main declaration not in quotes...
 bool hasOpened = false;
 int open = 0;
 
-for (; lineNumber < lines.Count; lineNumber++, column = 0)
+for (; (lineNumber < lines.Count) && (!hasOpened || open > 0); lineNumber++, column = 0)
 {
     string line = lines[lineNumber];
     for (; column < line.Length; ++column)
