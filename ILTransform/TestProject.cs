@@ -265,18 +265,12 @@ namespace ILTransform
 
         public static bool GetILClassName(string line, out string? className)
         {
-            int classIndex = line.IndexOf(".class");
-            int structIndex = line.IndexOf(".struct");
-            int scanIndex;
-            if (classIndex >= 0)
+            int scanIndex = line.EndIndexOf(".class");
+            if (scanIndex < 0)
             {
-                scanIndex = classIndex + 6;
+                scanIndex = line.EndIndexOf(".struct");
             }
-            else if (structIndex >= 0)
-            {
-                scanIndex = structIndex + 7;
-            }
-            else
+            if (scanIndex < 0)
             {
                 className = null;
                 return false;
@@ -1555,14 +1549,12 @@ namespace ILTransform
                 Console.WriteLine("AnalyzeCSSource: {0}", path);
             }
 
-            string fileName = Path.GetFileNameWithoutExtension(path);
-            bool isMainFile = false;
-
             if (lines.Any(line => line.Contains("Environment.Exit")))
             {
                 hasExit = true;
             }
 
+            bool isMainFile = false;
             for (int mainLine = lines.Count; --mainLine >= 0;)
             {
                 string line = lines[mainLine];
@@ -1571,14 +1563,9 @@ namespace ILTransform
                     hasFactAttribute = true;
                     isMainFile = true;
                 }
-                int mainPos = line.IndexOf("int Main()");
-                int entrypointPos = -1;
-                if (mainPos < 0)
-                {
-                    entrypointPos = line.IndexOf("TestEntrypoint()");
-                }
 
-                if (mainPos >= 0 || entrypointPos >= 0)
+                bool foundMain = line.Contains("int Main()") || line.Contains("TestEntrypoint()");
+                if (foundMain)
                 {
                     int mainLineIndent = GetIndent(line);
                     mainMethodLine = mainLine;
@@ -1593,19 +1580,10 @@ namespace ILTransform
                             do
                             {
                                 line = lines[mainLine];
-                                int classPos = line.IndexOf("class ");
-                                int classNameStart = -1;
-                                if (classPos >= 0)
+                                int classNameStart = line.EndIndexOf("class ");
+                                if (classNameStart < 0)
                                 {
-                                    classNameStart = classPos + 6;
-                                }
-                                else
-                                {
-                                    classPos = line.IndexOf("struct ");
-                                    if (classPos >= 0)
-                                    {
-                                        classNameStart = classPos + 7;
-                                    }
+                                    classNameStart = line.EndIndexOf("struct ");
                                 }
                                 if (classNameStart >= 0)
                                 {
@@ -1667,10 +1645,9 @@ namespace ILTransform
                                     while (--mainLine >= 0)
                                     {
                                         line = lines[mainLine];
-                                        int namespacePos = line.IndexOf("namespace ");
-                                        if (namespacePos >= 0)
+                                        int namespaceNameStart = line.EndIndexOf("namespace ");
+                                        if (namespaceNameStart >= 0)
                                         {
-                                            int namespaceNameStart = namespacePos + 10;
                                             int namespaceNameEnd = namespaceNameStart;
                                             while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd]))
                                             {
