@@ -3,6 +3,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Reflection.Metadata;
 using System.Text;
@@ -102,7 +103,8 @@ namespace ILTransform
             int lastHeaderCommentLine,
             int lastUsingLine,
             int namespaceLine,
-            bool hasFactAttribute)
+            bool hasFactAttribute,
+            bool hasExit)
         {
             AbsolutePath = absolutePath;
             RelativePath = relativePath;
@@ -129,7 +131,7 @@ namespace ILTransform
             {
                 Console.WriteLine("New value {0} for RequiresProcessIsolation in {1}", requiresProcessIsolation, AbsolutePath);
             }
-            NeedsRequiresProcessIsolation = HasProperty("CLRTestTargetUnsupported") || HasProperty("UnloadabilityIncompatible");
+            NeedsRequiresProcessIsolation = TestProjectStore.RequiresProcessIsolationProperties.Any(HasProperty) || hasExit;
 
             CompileFiles = compileFiles;
             ProjectReferences = projectReferences;
@@ -432,7 +434,8 @@ namespace ILTransform
             rootName = rootName.Substring(0, suffixIndex);
         }
 
-        private string GetProperty(string name, string defaultValue = "")
+        [return: NotNullIfNotNull("defaultValue")]
+        private string? GetProperty(string name, string? defaultValue = "")
             => AllProperties.TryGetValue(name, out string? property) ? property : defaultValue;
 
         private bool HasProperty(string name) => AllProperties.ContainsKey(name);
@@ -519,12 +522,35 @@ namespace ILTransform
             "OutputType",
             "CLRTestKind",
             "CLRTestPriority",
-            "AllowUnsafeBlocks",
             "DebugType",
             "Optimize",
+
             "RequiresProcessIsolation",
+
+            // Build-time options aren't relevant to merging
+            "AllowUnsafeBlocks",
+            "Noconfig",
+            "NoStandardLib",
+            "DefineConstants",
+            "NoWarn",
+            "DisableProjectBuild", // no runtime considerations - it's either there or not
+            "RestorePackages",
+            "TargetFramework", //! VERIFY
+            "ReferenceXUnitWrapperGenerator", //! VERIFY
+            "EnableUnsafeBinaryFormatterSerialization", //! VERIFY
+        };
+
+        public static string[] RequiresProcessIsolationProperties = new string[]
+        {
             "CLRTestTargetUnsupported",
+            "GCStressIncompatible",
             "UnloadabilityIncompatible",
+            "JitOptimizationSensitive",
+            "TieringTestIncompatible",
+            "HeapVerifyIncompatible",
+            "IlasmRoundTripIncompatible",
+            "SynthesizedPgoIncompatible",
+            "CrossGenTest",
         };
 
         public void DumpFolderStatistics(TextWriter writer)
@@ -571,7 +597,12 @@ namespace ILTransform
                 }
                 foreach (KeyValuePair<string, TestCount> kvp in folderCounts.OrderBy(kvp => kvp.Key))
                 {
-                    string props = string.Join(' ', kvp.Value.Properties.Except(s_standardProperties).OrderBy(prop => prop));
+                    string props = string.Join(
+                        ' ',
+                        kvp.Value.Properties
+                            .Except(s_standardProperties)
+                            .Except(RequiresProcessIsolationProperties)
+                            .OrderBy(prop => prop));
 
                     writer.WriteLine(
                         "{0,5} | {1,6} | {2,6} | {3,6} | {4,6} | {5,6} | {6} ({7})",
@@ -1298,7 +1329,7 @@ namespace ILTransform
                                                 string file = compileFile
                                                     .Replace("$(MSBuildProjectName)", projectName)
                                                     .Replace("$(MSBuildThisFileName)", projectName)
-                                                    .Replace("$(InteropCommonDir)", "../common/");
+                                                    .Replace("$(InteropCommonDir)", "../common/"); // special case for src\tests\Interop\...
                                                 compileFiles.Add(Path.GetFullPath(file, projectDir));
                                             }
                                         }
@@ -1330,6 +1361,7 @@ namespace ILTransform
             int lastUsingLine = -1;
             int namespaceLine = -1;
             bool hasFactAttribute = false;
+            bool hasExit = false;
             foreach (string compileFile in compileFiles)
             {
                 try
@@ -1345,7 +1377,8 @@ namespace ILTransform
                         lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute);
+                        hasFactAttribute: ref hasFactAttribute,
+                        hasExit: ref hasExit);
                 }
                 catch (Exception ex)
                 {
@@ -1368,7 +1401,8 @@ namespace ILTransform
                 lastHeaderCommentLine: lastHeaderCommentLine,
                 lastUsingLine: lastUsingLine,
                 namespaceLine: namespaceLine,
-                hasFactAttribute: hasFactAttribute));
+                hasFactAttribute: hasFactAttribute,
+                hasExit: hasExit));
         }
 
         private static void AnalyzeSource(
@@ -1382,7 +1416,8 @@ namespace ILTransform
             ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
-            ref bool hasFactAttribute)
+            ref bool hasFactAttribute,
+            ref bool hasExit)
         {
             if (path.IndexOf('*') < 0 && path.IndexOf('?') < 0)
             {
@@ -1398,7 +1433,8 @@ namespace ILTransform
                     lastHeaderCommentLine: ref lastHeaderCommentLine,
                     lastUsingLine: ref lastUsingLine,
                     namespaceLine: ref namespaceLine,
-                    hasFactAttribute: ref hasFactAttribute);
+                    hasFactAttribute: ref hasFactAttribute,
+                    hasExit: ref hasExit);
                 return;
             }
 
@@ -1429,7 +1465,8 @@ namespace ILTransform
                     lastHeaderCommentLine: ref lastHeaderCommentLine,
                     lastUsingLine: ref lastUsingLine,
                     namespaceLine: ref namespaceLine,
-                    hasFactAttribute: ref hasFactAttribute);
+                    hasFactAttribute: ref hasFactAttribute,
+                    hasExit: ref hasExit);
             }
         }
 
@@ -1444,7 +1481,8 @@ namespace ILTransform
             ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
-            ref bool hasFactAttribute)
+            ref bool hasFactAttribute,
+            ref bool hasExit)
         {
             switch (Path.GetExtension(path).ToLower())
             {
@@ -1460,7 +1498,8 @@ namespace ILTransform
                         lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute);
+                        hasFactAttribute: ref hasFactAttribute,
+                        hasExit: ref hasExit);
                     break;
 
                 case ".cs":
@@ -1475,7 +1514,8 @@ namespace ILTransform
                         lastHeaderCommentLine: ref lastHeaderCommentLine,
                         lastUsingLine: ref lastUsingLine,
                         namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute);
+                        hasFactAttribute: ref hasFactAttribute,
+                        hasExit: ref hasExit);
                     break;
 
                 default:
@@ -1505,7 +1545,8 @@ namespace ILTransform
             ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
-            ref bool hasFactAttribute)
+            ref bool hasFactAttribute,
+            ref bool hasExit)
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));
 
@@ -1516,6 +1557,11 @@ namespace ILTransform
 
             string fileName = Path.GetFileNameWithoutExtension(path);
             bool isMainFile = false;
+
+            if (lines.Any(line => line.Contains("Environment.Exit")))
+            {
+                hasExit = true;
+            }
 
             for (int mainLine = lines.Count; --mainLine >= 0;)
             {
@@ -1710,7 +1756,8 @@ namespace ILTransform
             ref int lastHeaderCommentLine,
             ref int lastUsingLine,
             ref int namespaceLine,
-            ref bool hasFactAttribute)
+            ref bool hasFactAttribute,
+            ref bool hasExit)
         {
             if (Path.GetFileName(path) == "han3.il")
             {
@@ -1718,6 +1765,11 @@ namespace ILTransform
             }
 
             List<string> lines = new List<string>(File.ReadAllLines(path));
+
+            if (lines.Any(line => line.Contains("Environment::Exit")))
+            {
+                hasExit = true;
+            }
 
             int lineIndex = lines.Count;
             while (--lineIndex >= 0)

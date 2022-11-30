@@ -113,7 +113,7 @@ namespace ILTransform
                 if (mainPos >= 0)
                 {
                     int lineInBody = lineIndex;
-                    while (!lines[lineInBody].Contains('{'))
+                    while (!lines[lineInBody].Contains('{') && !lines[lineInBody].Contains("=>"))
                     {
                         if (++lineInBody >= lines.Count)
                         {
@@ -364,7 +364,7 @@ namespace ILTransform
                             {
                                 if (s != i)
                                 {
-                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, IdentKind.Type);
+                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, IdentKind.TypeUse);
                                 }
                             }
                         }
@@ -508,14 +508,17 @@ namespace ILTransform
                 // Do this before the OutputType removal, which might remove the first PropertyGroup.
                 if (_addProcessIsolation && _testProject.NeedsRequiresProcessIsolation && !hasRequiresProcessIsolation)
                 {
-                    if (lines.Contains("<PropertyGroup"))
+                    if (line.Contains("<PropertyGroup"))
                     {
                         int indent = TestProject.GetIndent(line);
                         int nextIndent = TestProject.GetIndent(lines[lineIndex + 1]);
+                        // If there's a line indented with the PropertyGroup, use that.  Otherwise just add 2 spaces.
                         string modelLine = (nextIndent > indent) ? lines[lineIndex + 1] : "  " + line;
                         // "+ 1" to add after the line.  Then "- 1" to reset to the last inserted line
                         // so that the loop's lineIndex++ puts us after the insertion.
                         lineIndex = InsertIndentedLines(lines, lineIndex + 1, s_processIsolationLines, modelLine) - 1;
+
+                        hasRequiresProcessIsolation = true;
                         rewritten = true;
                         continue;
                     }
@@ -556,7 +559,7 @@ namespace ILTransform
         private enum IdentKind
         {
             Namespace,
-            Type,
+            TypeUse,
             Other
         }
 
@@ -581,13 +584,27 @@ namespace ILTransform
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "."
             && kinds[index + 2] == TokenKind.Identifier;
 
-        private bool IsClassPrefix(List<string> tokens, List<TokenKind> kinds, int index)
+        private bool IsTypePrefix(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 2 < tokens.Count)
-            && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "::"
+            && kinds[index + 1] == TokenKind.Other
+            && ((tokens[index + 1] == "::") || (tokens[index + 1] == "/")) // type::field or type::nestedtype
             && kinds[index + 2] == TokenKind.Identifier;
 
-        private bool IsClassName(List<string> tokens, List<TokenKind> kinds, int index)
-            => (index - 2 >= 0)
+        private static string[] TypeDefTokens = { "public", "auto", "ansi" };
+        private bool IsTypeNameDef(List<string> tokens, List<TokenKind> kinds, int index)
+        {
+            for (; index >= 2; index -= 2)
+            {
+                if (kinds[index - 1] != TokenKind.WhiteSpace) break;
+                if (kinds[index - 2] != TokenKind.Identifier) break;
+                if (tokens[index - 2] == ".class") return true;
+                if (!TypeDefTokens.Contains(tokens[index - 2])) break;
+            }
+            return false;
+        }
+
+        private bool IsTypeNameUse(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index >= 2)
             && kinds[index - 2] == TokenKind.Identifier && (tokens[index - 2] == "class" || tokens[index - 2] == "valuetype")
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
@@ -595,16 +612,19 @@ namespace ILTransform
             => (index + 1 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "(";
 
-        private bool IsLdTokenType(List<string> tokens, List<TokenKind> kinds, int index)
-            => (index - 2 >= 0)
-            && kinds[index - 2] == TokenKind.Identifier && tokens[index - 2] == "ldtoken"
+        private static string[] TypeOperators = { "ldtoken", "box", "initobj", "stobj", "isinst", "castclass", "catch" };
+        private bool IsOperatorType(List<string> tokens, List<TokenKind> kinds, int index)
+            => !IsNamespacePrefix(tokens, kinds, index)
+            && (index >= 2)
+            && kinds[index - 2] == TokenKind.Identifier && TypeOperators.Contains(tokens[index - 2])
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
-        private bool IsImplements(List<string> tokens, List<TokenKind> kinds, int index)
+        private bool IsInheritanceType(List<string> tokens, List<TokenKind> kinds, int index)
         {
             while (--index >= 0)
             {
-                if ((kinds[index] == TokenKind.Identifier) && (tokens[index] == "implements"))
+                if ((kinds[index] == TokenKind.Identifier)
+                    && ((tokens[index] == "extends") || (tokens[index] == "implements")))
                 {
                     return true;
                 }
@@ -620,10 +640,18 @@ namespace ILTransform
             return false;
         }
 
+        private bool IsVariableName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index >= 2)
+            && kinds[index - 2] == TokenKind.Identifier && tokens[index - 2] == "int"
+            && kinds[index - 1] == TokenKind.WhiteSpace;
+
         private List<(string, TokenKind)> SpecialTokens = new List<(string, TokenKind)>()
         {
+            (".class", TokenKind.Identifier),
             (".ctor", TokenKind.Identifier),
             ("::", TokenKind.Other),
+            ("(", TokenKind.Other),
+            (")", TokenKind.Other),
         };
 
         private string ReplaceIdent(string source, string searchIdent, string replaceIdent, IdentKind searchKind = IdentKind.Other)
@@ -721,31 +749,37 @@ namespace ILTransform
                             {
                                 // good
                             }
+                            else if (IsTypeNameDef(tokens, kinds, i))
+                            {
+                                replace = false;
+                            }
                             else
                             {
-                                Console.WriteLine("{0}: Couldn't determine token kind of token #{1}={2} in",
+                                Console.WriteLine("{0}: Checking for namespace: couldn't determine token kind of token #{1}={2} in",
                                     _testProject.AbsolutePath, i, token);
                                 Console.WriteLine(source);
                                 replace = false;
                             }
                         }
-                        else if (searchKind == IdentKind.Type)
+                        else if (searchKind == IdentKind.TypeUse)
                         {
-                            if (IsClassPrefix(tokens, kinds, i)
-                                || IsClassName(tokens, kinds, i)
-                                || IsImplements(tokens, kinds, i)
-                                || IsLdTokenType(tokens, kinds, i))
+                            if (IsTypePrefix(tokens, kinds, i)
+                                || IsTypeNameUse(tokens, kinds, i)
+                                || IsInheritanceType(tokens, kinds, i)
+                                || IsOperatorType(tokens, kinds, i))
                             {
                                 // good
                             }
                             else if (IsNamespacePrefix(tokens, kinds, i)
-                                || IsMethodName(tokens, kinds, i))
+                                || IsMethodName(tokens, kinds, i)
+                                || IsTypeNameDef(tokens, kinds, i)
+                                || IsVariableName(tokens, kinds, i))
                             {
                                 replace = false;
                             }
                             else
                             {
-                                Console.WriteLine("{0}: Couldn't determine token kind of token #{1}={2} in",
+                                Console.WriteLine("{0}: Checking for type: couldn't determine token kind of token #{1}={2} in",
                                     _testProject.AbsolutePath, i, token);
                                 Console.WriteLine(source);
                                 replace = false;
