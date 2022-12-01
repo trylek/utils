@@ -37,17 +37,13 @@ namespace ILTransform
 
         // Add 'linesToAdd' to 'lines' at index 'index' with indentation copied from 'modelLine'
         // Returns index of lines after the inserted lines
-        private static int InsertIndentedLines(List<string> lines, int index, string[] linesToAdd, string modelLine)
+        private static int InsertIndentedLines(List<string> lines, int index, IEnumerable<string> linesToAdd, string modelLine)
         {
             int indent = TestProject.GetIndent(modelLine);
             string indentString = modelLine.Substring(0, indent);
-            string[] indentedLinesToAdd = new string[linesToAdd.Length];
-            for (int i = 0; i < linesToAdd.Length; i++)
-            {
-                indentedLinesToAdd[i] = indentString + linesToAdd[i];
-            }
-            lines.InsertRange(index, indentedLinesToAdd);
-            return index + linesToAdd.Length;
+            int oldCount = lines.Count;
+            lines.InsertRange(index, linesToAdd.Select(line => indentString + line));
+            return index + lines.Count - oldCount;
         }
 
         private readonly TestProject _testProject;
@@ -419,10 +415,10 @@ namespace ILTransform
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
                     string line = lines[lineIndex];
-                    int assemblyIndex = line.IndexOf(".assembly");
+                    int assemblyIndex = line.EndIndexOf(".assembly");
                     if (assemblyIndex >= 0)
                     {
-                        for (int charIndex = assemblyIndex + 9; charIndex < line.Length; charIndex++)
+                        for (int charIndex = assemblyIndex; charIndex < line.Length; charIndex++)
                         {
                             if (char.IsWhiteSpace(line[charIndex]))
                             {
@@ -514,9 +510,13 @@ namespace ILTransform
                         int nextIndent = TestProject.GetIndent(lines[lineIndex + 1]);
                         // If there's a line indented with the PropertyGroup, use that.  Otherwise just add 2 spaces.
                         string modelLine = (nextIndent > indent) ? lines[lineIndex + 1] : "  " + line;
+
+                        string commentLine = $"<!-- Needed for {string.Join(", ", _testProject.RequiresProcessIsolationReasons)} -->";
+                        List<string> insertLines = new List<string>() { commentLine };
+                        insertLines.AddRange(s_processIsolationLines);
                         // "+ 1" to add after the line.  Then "- 1" to reset to the last inserted line
                         // so that the loop's lineIndex++ puts us after the insertion.
-                        lineIndex = InsertIndentedLines(lines, lineIndex + 1, s_processIsolationLines, modelLine) - 1;
+                        lineIndex = InsertIndentedLines(lines, lineIndex + 1, insertLines, modelLine) - 1;
 
                         hasRequiresProcessIsolation = true;
                         rewritten = true;

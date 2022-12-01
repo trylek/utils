@@ -50,10 +50,11 @@ namespace ILTransform
         public int Fact;
         public int ILProj;
         public HashSet<string> Properties;
+        public HashSet<string> ItemGroups;
 
         public int Pri1 => Total - Pri0;
 
-        public static TestCount New() => new TestCount() { Properties = new HashSet<string>() };
+        public static TestCount New() => new TestCount() { Properties = new HashSet<string>(), ItemGroups = new HashSet<string>() };
     }
 
     public class TestProject
@@ -67,7 +68,7 @@ namespace ILTransform
         public readonly string CLRTestExecutionArguments;
         public readonly DebugOptimize DebugOptimize;
         public readonly bool HasRequiresProcessIsolation;
-        public readonly bool NeedsRequiresProcessIsolation;
+        public readonly string[] RequiresProcessIsolationReasons;
         public readonly string[] CompileFiles;
         public readonly string[] ProjectReferences;
         public readonly string TestClassName;
@@ -81,6 +82,7 @@ namespace ILTransform
         public readonly int NamespaceLine;
         public readonly bool HasFactAttribute;
         public readonly Dictionary<string, string> AllProperties;
+        public readonly HashSet<string> AllItemGroups;
 
         public readonly bool IsILProject;
 
@@ -92,6 +94,7 @@ namespace ILTransform
             string absolutePath,
             string relativePath,
             Dictionary<string, string> allProperties,
+            HashSet<string> allItemGroups,
             string[] compileFiles,
             string[] projectReferences,
             string testClassName,
@@ -109,6 +112,7 @@ namespace ILTransform
             AbsolutePath = absolutePath;
             RelativePath = relativePath;
             AllProperties = allProperties;
+            AllItemGroups = allItemGroups;
 
             OutputType = GetProperty("OutputType");
             CLRTestKind = GetProperty("CLRTestKind");
@@ -131,7 +135,10 @@ namespace ILTransform
             {
                 Console.WriteLine("New value {0} for RequiresProcessIsolation in {1}", requiresProcessIsolation, AbsolutePath);
             }
-            NeedsRequiresProcessIsolation = TestProjectStore.RequiresProcessIsolationProperties.Any(HasProperty) || hasExit;
+            RequiresProcessIsolationReasons =
+                TestProjectStore.RequiresProcessIsolationProperties.Where(HasProperty).Concat(
+                    TestProjectStore.RequiresProcessIsolationItemGroups.Where(HasItemGroup)).Concat(
+                        new[] { "Environment.Exit" }.Where(_ => hasExit)).ToArray();
 
             CompileFiles = compileFiles;
             ProjectReferences = projectReferences;
@@ -148,6 +155,8 @@ namespace ILTransform
 
             IsILProject = Path.GetExtension(RelativePath).ToLower() == ".ilproj";
         }
+
+        public bool NeedsRequiresProcessIsolation => RequiresProcessIsolationReasons.Length > 0;
 
         public static bool IsIdentifier(char c)
         {
@@ -433,6 +442,7 @@ namespace ILTransform
             => AllProperties.TryGetValue(name, out string? property) ? property : defaultValue;
 
         private bool HasProperty(string name) => AllProperties.ContainsKey(name);
+        private bool HasItemGroup(string name) => AllItemGroups.Contains(name);
 
         private static string SanitizeFileName(string fileName, string projectPath)
         {
@@ -547,6 +557,21 @@ namespace ILTransform
             "CrossGenTest",
         };
 
+        public static string[] s_standardItemGroups = new string[]
+        {
+            "Compile",
+            "ProjectReference",
+        };
+
+        public static string[] RequiresProcessIsolationItemGroups = new string[]
+        {
+            "CLRTestBashEnvironmentVariable",
+            "CLRTestBatchEnvironmentVariable",
+            "CLRTestEnvironmentVariable",
+            "Content",
+            "CMakeProjectReference",
+        };
+
         public void DumpFolderStatistics(TextWriter writer)
         {
             for (int level = 1; level <= 5; level++)
@@ -587,6 +612,7 @@ namespace ILTransform
                         count.ILProj++;
                     }
                     count.Properties!.UnionWith(project.AllProperties.Keys);
+                    count.ItemGroups!.UnionWith(project.AllItemGroups);
                     folderCounts[folderName] = count;
                 }
                 foreach (KeyValuePair<string, TestCount> kvp in folderCounts.OrderBy(kvp => kvp.Key))
@@ -596,6 +622,12 @@ namespace ILTransform
                         kvp.Value.Properties
                             .Except(s_standardProperties)
                             .Except(RequiresProcessIsolationProperties)
+                            .OrderBy(prop => prop));
+                    string itemGroups = string.Join(
+                        ' ',
+                        kvp.Value.ItemGroups
+                            .Except(s_standardItemGroups)
+                            .Except(RequiresProcessIsolationItemGroups)
                             .OrderBy(prop => prop));
 
                     writer.WriteLine(
@@ -608,6 +640,13 @@ namespace ILTransform
                         kvp.Value.Total - kvp.Value.Fact,
                         kvp.Key,
                         props);
+                    if (!string.IsNullOrEmpty(itemGroups))
+                    {
+                        writer.WriteLine(
+                            "{0} | ({1})",
+                            new string(' ', 5 + 3 + 6 + 3 + 6 + 3 + 6 + 3 + 6 + 3 + 6),
+                            itemGroups);
+                    }
                 }
                 writer.WriteLine();
             }
@@ -1289,6 +1328,7 @@ namespace ILTransform
             List<string> compileFiles = new List<string>();
             List<string> projectReferences = new List<string>();
             Dictionary<string, string> allProperties = new Dictionary<string, string>();
+            HashSet<string> allItemGroups = new HashSet<string>();
 
             XmlDocument xmlDoc = new XmlDocument();
             xmlDoc.Load(absolutePath);
@@ -1310,6 +1350,11 @@ namespace ILTransform
                     {
                         foreach (XmlNode item in projectChild.ChildNodes)
                         {
+                            if (item.Name != "#comment")
+                            {
+                                allItemGroups.Add(item.Name);
+                            }
+
                             switch (item.Name)
                             {
                                 case "Compile":
@@ -1384,6 +1429,7 @@ namespace ILTransform
                 absolutePath: absolutePath,
                 relativePath: relativePath,
                 allProperties: allProperties,
+                allItemGroups: allItemGroups,
                 compileFiles: compileFiles.ToArray(),
                 projectReferences: projectReferences.ToArray(),
                 testClassName: testClassName,
