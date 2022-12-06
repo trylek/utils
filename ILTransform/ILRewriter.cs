@@ -8,6 +8,7 @@ using System.Reflection.Metadata.Ecma335;
 using System.Runtime.InteropServices;
 using System.Security.Authentication.ExtendedProtection;
 using System.Text;
+using System.Text.RegularExpressions;
 
 namespace ILTransform
 {
@@ -48,28 +49,19 @@ namespace ILTransform
 
         private readonly TestProject _testProject;
         private readonly HashSet<string> _classNameDuplicates;
-        private readonly bool _deduplicateClassNames;
+        private readonly Settings _settings;
         private readonly HashSet<string> _rewrittenFiles;
-        private readonly bool _addProcessIsolation;
-        private readonly bool _addILFactAttributes;
-        private readonly bool _cleanupILModuleAssembly;
 
         public ILRewriter(
             TestProject testProject,
             HashSet<string> classNameDuplicates,
-            bool deduplicateClassNames,
-            HashSet<string> rewrittenFiles,
-            bool addProcessIsolation,
-            bool addILFactAttributes,
-            bool cleanupILModuleAssembly)
+            Settings settings,
+            HashSet<string> rewrittenFiles)
         {
             _testProject = testProject;
             _classNameDuplicates = classNameDuplicates;
-            _deduplicateClassNames = deduplicateClassNames;
+            _settings = settings;
             _rewrittenFiles = rewrittenFiles;
-            _addProcessIsolation = addProcessIsolation;
-            _addILFactAttributes = addILFactAttributes;
-            _cleanupILModuleAssembly = cleanupILModuleAssembly;
         }
 
         public void Rewrite()
@@ -78,9 +70,9 @@ namespace ILTransform
             {
                 RewriteFile(_testProject.TestClassSourceFile);
             }
-            if (!_deduplicateClassNames && !_cleanupILModuleAssembly)
+            if (!_settings.DeduplicateClassNames)
             {
-                RewriteProject(_testProject.AbsolutePath);
+                RewriteProject(_testProject.NewAbsolutePath ?? _testProject.AbsolutePath);
             }
         }
 
@@ -95,7 +87,7 @@ namespace ILTransform
                 Console.WriteLine("RewriteFile: {0}", ilSource);
             }
 
-            if (_testProject.MainMethodLine >= 0 /*&& !_cleanupILModuleAssembly*/)
+            if (_testProject.MainMethodLine >= 0 /*&& !_settings.CleanupILModuleAssembly*/)
             {
                 int lineIndex = _testProject.MainMethodLine;
                 string line = lines[lineIndex];
@@ -118,7 +110,7 @@ namespace ILTransform
                         }
                     }
 
-                    if (_addILFactAttributes && !_testProject.HasFactAttribute)
+                    if (_settings.AddILFactAttributes && !_testProject.HasFactAttribute)
                     {
                         int indentLine = (isILTest ? lineInBody + 1 : lineIndex);
                         string firstMainBodyLine = lines[indentLine];
@@ -133,10 +125,11 @@ namespace ILTransform
                             lines[lineIndex] = ReplaceIdent(line, "Main", "TestEntryPoint");
                             lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
                         }
+                        _testProject.AddedFactAttribute = true;
                         rewritten = true;
                     }
 
-                    if (!_cleanupILModuleAssembly)
+                    if (_settings.UncategorizedCleanup && !_settings.CleanupILModuleAssembly)
                     {
                         if (isILTest)
                         {
@@ -187,7 +180,7 @@ namespace ILTransform
 
                     /*
                     int closingParen = line.IndexOf(')', mainPos + MainTag.Length);
-                    if (!_deduplicateClassNames)
+                    if (!_settings.DeduplicateClassNames)
                     {
                         string replacement = " Test(";
                         lines[lineIndex] = line.Substring(0, mainPos) + replacement + line.Substring(closingParen);
@@ -204,7 +197,7 @@ namespace ILTransform
                         int privatePos = line.IndexOf("private ");
                         if (privatePos >= 0)
                         {
-                            if (!_deduplicateClassNames)
+                            if (!_settings.DeduplicateClassNames)
                             {
                                 line = line.Substring(0, privatePos) + "public" + line.Substring(privatePos + 7);
                                 lines[privateIndex] = line;
@@ -222,7 +215,7 @@ namespace ILTransform
                 }
             }
 
-            if (_testProject.TestClassLine < 0)
+            if (_settings.UncategorizedCleanup && _testProject.TestClassLine < 0)
             {
                 if (isILTest)
                 {
@@ -231,7 +224,7 @@ namespace ILTransform
                     lines.Add("}");
                 }
             }
-            else if (!_cleanupILModuleAssembly)
+            else if (_settings.UncategorizedCleanup && !_settings.CleanupILModuleAssembly)
             {
                 string line = lines[_testProject.TestClassLine];
                 TestProject.MakePublic(isILTest: isILTest, ref line, force: true);
@@ -239,11 +232,11 @@ namespace ILTransform
                 rewritten = true;
             }
 
-            if (!_deduplicateClassNames && !_cleanupILModuleAssembly)
+            if (!_settings.DeduplicateClassNames && !_settings.CleanupILModuleAssembly)
             {
                 bool hasXunitReference = false;
                 string testName = _testProject.TestProjectAlias!;
-                bool addFactAttribute = _addILFactAttributes && !_testProject.HasFactAttribute && isILTest;
+                bool addFactAttribute = _settings.AddILFactAttributes && !_testProject.HasFactAttribute && isILTest;
                 if (isILTest)
                 {
                     for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
@@ -345,7 +338,9 @@ namespace ILTransform
                     }
                 }
 
-                if (_testProject.TestClassNamespace == "" && _testProject.DeduplicatedNamespaceName != null)
+                if (_settings.UncategorizedCleanup
+                    && _testProject.TestClassNamespace == ""
+                    && _testProject.DeduplicatedNamespaceName != null)
                 {
                     int lineIndex = _testProject.NamespaceLine;
                     lines.Insert(lineIndex, (isILTest ? "." : "") + "namespace " + _testProject.DeduplicatedNamespaceName);
@@ -368,7 +363,8 @@ namespace ILTransform
 
                     rewritten = true;
                 }
-                else if (_testProject.DeduplicatedNamespaceName != null)
+                else if (_settings.UncategorizedCleanup
+                    && _testProject.DeduplicatedNamespaceName != null)
                 {
                     if (isILTest)
                     {
@@ -384,7 +380,7 @@ namespace ILTransform
                     rewritten = true;
                 }
 
-                if (!isILTest)
+                if (_settings.UncategorizedCleanup && !isILTest)
                 {
                     bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines[_testProject.LastUsingLine].Contains("Xunit"));
                     int rewriteLine = _testProject.LastUsingLine;
@@ -401,7 +397,7 @@ namespace ILTransform
                 }
             }
 
-            if (_cleanupILModuleAssembly && isILTest)
+            if (_settings.CleanupILModuleAssembly && isILTest)
             {
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
@@ -475,7 +471,7 @@ namespace ILTransform
                 }
             }
 
-            if (_testProject.DeduplicatedClassName != null)
+            if (_settings.UncategorizedCleanup && _testProject.DeduplicatedClassName != null)
             {
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
@@ -495,14 +491,14 @@ namespace ILTransform
             List<string> lines = new List<string>(File.ReadAllLines(path));
             bool rewritten = false;
             bool hasRequiresProcessIsolation = _testProject.HasRequiresProcessIsolation;
-
+            string oldRootname = Path.GetFileNameWithoutExtension(_testProject.RelativePath);
             for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
             {
                 string line = lines[lineIndex];
 
                 // Add RequiresProcessIsolation to first PropertyGroup.
                 // Do this before the OutputType removal, which might remove the first PropertyGroup.
-                if (_addProcessIsolation && _testProject.NeedsRequiresProcessIsolation && !hasRequiresProcessIsolation)
+                if (_settings.AddProcessIsolation && _testProject.NeedsRequiresProcessIsolation && !hasRequiresProcessIsolation)
                 {
                     if (line.Contains("<PropertyGroup"))
                     {
@@ -526,7 +522,7 @@ namespace ILTransform
 
                 const string outputTypeTag = "<OutputType>Exe</OutputType>";
                 bool containsOutputType = line.Contains(outputTypeTag);
-                if (_addILFactAttributes && containsOutputType)
+                if (_settings.AddILFactAttributes && containsOutputType)
                 {
                     lines.RemoveAt(lineIndex--);
                     if ((lines[lineIndex].Trim() == "<PropertyGroup>")
@@ -537,6 +533,19 @@ namespace ILTransform
                     }
                     rewritten = true;
                     continue;
+                }
+
+                const string compileTag = "<Compile Include";
+                const string projectNameTag = "$(MSBuildProjectName)";
+                bool containsCompileTag = line.Contains(compileTag);
+                if ((_testProject.NewAbsolutePath!= null) && containsCompileTag)
+                {
+                    string replaced = line.Replace(projectNameTag, oldRootname);
+                    if (replaced != line)
+                    {
+                        lines[lineIndex] = replaced;
+                        rewritten = true;
+                    }
                 }
 
                 /*
@@ -550,6 +559,7 @@ namespace ILTransform
                 }
                 */
             }
+
             if (rewritten)
             {
                 File.WriteAllLines(path, lines);

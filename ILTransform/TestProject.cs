@@ -89,6 +89,8 @@ namespace ILTransform
         public string? TestProjectAlias;
         public string? DeduplicatedClassName;
         public string? DeduplicatedNamespaceName;
+        public bool AddedFactAttribute = false;
+        public string? NewAbsolutePath;
 
         public TestProject(
             string absolutePath,
@@ -487,20 +489,6 @@ namespace ILTransform
 
         public void AddCommonClassName(string className) => _commonClassNames.Add(className);
 
-        private void AddToMultiMap<TKey>(
-            Dictionary<TKey, List<TestProject>> multiMap,
-            TKey key,
-            TestProject project)
-            where TKey : notnull
-        {
-            if (!multiMap.TryGetValue(key, out List<TestProject>? projectList))
-            {
-                projectList = new List<TestProject>();
-                multiMap.Add(key, projectList);
-            }
-            projectList!.Add(project);
-        }
-
         public void ScanTrees(IReadOnlyList<string> rootPaths)
         {
             int projectCount = 0;
@@ -674,63 +662,45 @@ namespace ILTransform
 
         public void DumpIrregularProjectSuffixes(TextWriter writer)
         {
-            writer.WriteLine("ILPROJ projects not ending in _il_d/do/r/ro");
-            writer.WriteLine("-------------------------------------------");
+            var configs = new (string, string, Func<string, bool>)[] {
+                ("ilproj",
+                "ending in _d/do/r/ro without _il",
+                p => (p.EndsWith("_il_do") || p.EndsWith("_il_ro") || p.EndsWith("_il_d") || p.EndsWith("_il_r"))
+                    && !p.EndsWith("_il_do") && !p.EndsWith("_il_ro") && !p.EndsWith("_il_d") && !p.EndsWith("_il_r")),
 
-            foreach (TestProject project in _projects)
+                //("ilproj",
+                //"not ending in _il_d/do/r/ro",
+                //p => !p.EndsWith("_il_do") && !p.EndsWith("_il_ro") && !p.EndsWith("_il_d") && !p.EndsWith("_il_r")),
+
+                ("csproj",
+                "ending in _il_d/do/r/ro",
+                p => p.EndsWith("_il_do") || p.EndsWith("_il_ro") || p.EndsWith("_il_d") || p.EndsWith("_il_r")),
+
+                //("csproj",
+                //"not ending in _d/_do/_r/_ro",
+                //p => !p.EndsWith("_do") && !p.EndsWith("_ro") && !p.EndsWith("_d") && !p.EndsWith("_r")),
+            };
+
+            foreach ((string ext, string desc, var pred) in configs)
             {
-                if (Path.GetExtension(project.RelativePath).ToLower() == ".ilproj")
+                string extCheck = "." + ext;
+
+                var displayProject = (TestProject project) =>
+                    (Path.GetExtension(project.RelativePath).ToLower() == extCheck)
+                    && pred(Path.GetFileNameWithoutExtension(project.RelativePath));
+
+                if (!_projects.Any(displayProject))
                 {
-                    string projectName = Path.GetFileNameWithoutExtension(project.RelativePath);
-                    if (!projectName.EndsWith("_il_do") &&
-                        !projectName.EndsWith("_il_ro") &&
-                        !projectName.EndsWith("_il_d") &&
-                        !projectName.EndsWith("_il_r"))
-                    {
-                        writer.WriteLine(project.AbsolutePath);
-                    }
+                    continue;
                 }
+
+                string header = $"{ext.ToUpper()} projects {desc}";
+                writer.WriteLine(header);
+                writer.WriteLine(new string('-', header.Length));
+
+                _projects.Where(displayProject).ToList().ForEach(project => writer.WriteLine(project.AbsolutePath));
+                writer.WriteLine();
             }
-
-            writer.WriteLine();
-
-            writer.WriteLine("CSPROJ projects ending in _il_d/do/r/ro");
-            writer.WriteLine("---------------------------------------");
-
-            foreach (TestProject project in _projects)
-            {
-                if (Path.GetExtension(project.RelativePath).ToLower() == ".csproj")
-                {
-                    string projectName = Path.GetFileNameWithoutExtension(project.RelativePath);
-                    if (projectName.EndsWith("_il_do") ||
-                        projectName.EndsWith("_il_ro") ||
-                        projectName.EndsWith("_il_d") ||
-                        projectName.EndsWith("_il_r"))
-                    {
-                        writer.WriteLine(project.AbsolutePath);
-                    }
-                }
-            }
-
-            writer.WriteLine("CSPROJ projects not ending in _d/_do/_r/_ro");
-            writer.WriteLine("-------------------------------------------");
-
-            foreach (TestProject project in _projects)
-            {
-                if (Path.GetExtension(project.RelativePath).ToLower() == ".csproj")
-                {
-                    string projectName = Path.GetFileNameWithoutExtension(project.RelativePath);
-                    if (!projectName.EndsWith("_do") &&
-                        !projectName.EndsWith("_ro") &&
-                        !projectName.EndsWith("_d") &&
-                        !projectName.EndsWith("_r"))
-                    {
-                        writer.WriteLine(project.AbsolutePath);
-                    }
-                }
-            }
-
-            writer.WriteLine();
         }
 
         public void DumpMultiProjectSources(TextWriter writer)
@@ -740,17 +710,7 @@ namespace ILTransform
             {
                 foreach (string source in project.CompileFiles)
                 {
-                    if (!potentialDuplicateMap.TryGetValue(source, out Dictionary<DebugOptimize, List<TestProject>>? sourceMap))
-                    {
-                        sourceMap = new Dictionary<DebugOptimize, List<TestProject>>();
-                        potentialDuplicateMap.Add(source, sourceMap);
-                    }
-                    if (!sourceMap.TryGetValue(project.DebugOptimize, out List<TestProject>? projects))
-                    {
-                        projects = new List<TestProject>();
-                        sourceMap.Add(project.DebugOptimize, projects);
-                    }
-                    projects.Add(project);
+                    Utils.AddToNestedMultiMap(potentialDuplicateMap, source, project);
                 }
             }
 
@@ -790,12 +750,7 @@ namespace ILTransform
                     projectKey.AppendLine("CompileFile: " + compileFile);
                 }
                 string key = projectKey.ToString();
-                if (!potentialDuplicateMap.TryGetValue(key, out List<TestProject>? projectList))
-                {
-                    projectList = new List<TestProject>();
-                    potentialDuplicateMap.Add(key, projectList);
-                }
-                projectList.Add(project);
+                Utils.AddToMultiMap(potentialDuplicateMap, key, project);
             }
 
             writer.WriteLine("PROJECT PAIRS WITH DUPLICATE CONTENT");
@@ -825,12 +780,7 @@ namespace ILTransform
             foreach (TestProject project in _projects)
             {
                 string simpleName = Path.GetFileNameWithoutExtension(project.RelativePath);
-                if (!simpleNameMap.TryGetValue(simpleName, out List<TestProject>? projectsForSimpleName))
-                {
-                    projectsForSimpleName = new List<TestProject>();
-                    simpleNameMap.Add(simpleName, projectsForSimpleName);
-                }
-                projectsForSimpleName.Add(project);
+                Utils.AddToMultiMap(simpleNameMap, simpleName, project);
             }
 
             foreach (KeyValuePair<string, List<TestProject>> kvp in simpleNameMap.Where(kvp => kvp.Value.Count > 1).OrderByDescending(kvp => kvp.Value.Count))
@@ -852,12 +802,7 @@ namespace ILTransform
                 Dictionary<DebugOptimize, List<TestProject>> debugOptMap = new Dictionary<DebugOptimize, List<TestProject>>();
                 foreach (TestProject project in kvp.Value)
                 {
-                    if (!debugOptMap.TryGetValue(project.DebugOptimize, out List<TestProject>? projects))
-                    {
-                        projects = new List<TestProject>();
-                        debugOptMap.Add(project.DebugOptimize, projects);
-                    }
-                    projects.Add(project);
+                    Utils.AddToMultiMap(debugOptMap, project.DebugOptimize, project);
                 }
                 List<TestProject> filteredDuplicates = new List<TestProject>();
                 foreach (List<TestProject> projectList in debugOptMap.Values.Where(v => v.Count > 1))
@@ -911,13 +856,18 @@ namespace ILTransform
 
         public void DumpProjectsWithoutFactAttributes(TextWriter writer)
         {
-            writer.WriteLine("PROJECTS WITHOUT FACT ATTRIBUTES");
-            writer.WriteLine("--------------------------------");
+            writer.WriteLine("PROJECTS WITH ADDED FACT ATTRIBUTES: {0}", _projects.Where(p => p.AddedFactAttribute).Count());
+            writer.WriteLine();
 
-            foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !p.HasFactAttribute).OrderBy(p => p.RelativePath))
-            {
-                writer.WriteLine(project.AbsolutePath);
-            }
+            writer.WriteLine("PROJECTS REMAINING WITHOUT FACT ATTRIBUTES (Count={0})",
+                _projects.Where(p => !p.HasFactAttribute && !p.AddedFactAttribute).Count());
+            writer.WriteLine("------------------------------------------");
+
+            _projects.Where(p => p.TestClassName != "" && !p.HasFactAttribute && !p.AddedFactAttribute)
+                .OrderBy(p => p.RelativePath)
+                .Select(p => p.AbsolutePath)
+                .ToList()
+                .ForEach(writer.WriteLine);
 
             writer.WriteLine();
         }
@@ -925,17 +875,9 @@ namespace ILTransform
         public void DumpCommandLineVariations(TextWriter writer)
         {
             Dictionary<string, List<TestProject>> commandlineVariations = new Dictionary<string, List<TestProject>>();
-            foreach (TestProject project in _projects)
+            foreach (TestProject project in _projects.Where(p => p.CLRTestExecutionArguments != ""))
             {
-                if (project.CLRTestExecutionArguments != "")
-                {
-                    if (!commandlineVariations.TryGetValue(project.CLRTestProjectToRun, out List<TestProject>? projects))
-                    {
-                        projects = new List<TestProject>();
-                        commandlineVariations.Add(project.CLRTestProjectToRun, projects);
-                    }
-                    projects.Add(project);
-                }
+                Utils.AddToMultiMap(commandlineVariations, project.CLRTestProjectToRun, project);
             }
 
             if (commandlineVariations.TryGetValue("", out List<TestProject>? singleProjects))
@@ -962,7 +904,7 @@ namespace ILTransform
             writer.WriteLine();
         }
 
-        public void RewriteAllTests(bool deduplicateClassNames, string classToDeduplicate, bool addProcessIsolation, bool addILFactAttributes, bool cleanupILModuleAssembly)
+        public void RewriteAllTests(Settings settings)
         {
             Stopwatch sw = Stopwatch.StartNew();
             HashSet<string> classNameDuplicates = new HashSet<string>(_classNameMap.Where(kvp => kvp.Value.Count > 1).Select(kvp => kvp.Key));
@@ -970,18 +912,15 @@ namespace ILTransform
             int index = 0;
             foreach (TestProject project in _projects)
             {
-                if (!string.IsNullOrEmpty(classToDeduplicate) && project.TestClassName != classToDeduplicate)
+                if (!string.IsNullOrEmpty(settings.ClassToDeduplicate) && project.TestClassName != settings.ClassToDeduplicate)
                 {
                     continue;
                 }
                 new ILRewriter(
                     project,
                     classNameDuplicates,
-                    deduplicateClassNames,
-                    _rewrittenFiles,
-                    addProcessIsolation: addProcessIsolation,
-                    addILFactAttributes: addILFactAttributes,
-                    cleanupILModuleAssembly: cleanupILModuleAssembly).Rewrite();
+                    settings,
+                    _rewrittenFiles).Rewrite();
                 index++;
                 if (index % 500 == 0)
                 {
@@ -1089,17 +1028,14 @@ namespace ILTransform
                     }
 
                     testProject.GetKeyNameRootNameAndSuffix(out string keyName, out string _, out string _);
-                    if (!rootNameToProjectMap.TryGetValue(keyName, out List<TestProject>? projects))
-                    {
-                        projects = new List<TestProject>();
-                        rootNameToProjectMap.Add(keyName, projects);
-                    }
-                    projects.Add(testProject);
+                    Utils.AddToMultiMap(rootNameToProjectMap, keyName, testProject);
                 }
 
                 foreach (List<TestProject> projectList in rootNameToProjectMap.Values.Where(pl => pl.Count > 1))
                 {
+                    // First find closest directory level with different names
                     int depth = 1;
+                    const int maxDepth = 3;
                     do
                     {
                         HashSet<string> folderCollisions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
@@ -1124,20 +1060,86 @@ namespace ILTransform
                             break;
                         }
                     }
-                    while (++depth < 2);
+                    while (++depth <= maxDepth);
 
-                    foreach (TestProject project in projectList)
+                    // Check that we found one
+                    if (depth > maxDepth)
+                    {
+                        Console.WriteLine("No collision found for duplicate project names:");
+                        projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
+                        continue;
+                    }
+
+                    List<string> projectDirs = projectList.Select(p => Path.GetDirectoryName(p.AbsolutePath)).ToList()!;
+                    List<string> extraRootNames;
+
+                    int ilprojIndex;
+                    // Simple case: sometest.csproj and sometest.ilproj => add _il to the ilproj
+                    if ((projectList.Count == 2)
+                        && (Path.GetFileNameWithoutExtension(projectList[0].RelativePath) == Path.GetFileNameWithoutExtension(projectList[1].RelativePath))
+                        && (projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".csproj") != -1)
+                        && ((ilprojIndex = projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".ilproj")) != -1))
+                    {
+                        extraRootNames = new List<string> {
+                            ilprojIndex == 0 ? "il" : "",
+                            ilprojIndex == 1 ? "il" : ""
+                        };
+                    }
+                    else
+                    {
+                        //! TODO: do next by tokens around -, _
+                        // Extra the 'depth'th directory name
+                        {
+                            IEnumerable<string> extraRootNameEnum = projectDirs;
+                            for (int i = 1; i < depth; ++i)
+                            {
+                                extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetDirectoryName(n)!);
+                            }
+                            extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetFileName(n));
+                            extraRootNames = extraRootNameEnum.ToList()!;
+                        }
+
+                        // Reduce ["pre-A-post", pre-B-post"] to ["A", "B"]
+
+                        // Strip matching leading characters - but only add token (by _ or -) boundaries
+                        int minLength = extraRootNames.Select(n => n.Length).Min();
+                        int leadingMatches = 0;
+                        int leadingTokenMatches = 0;
+                        while ((leadingMatches < minLength)
+                            && extraRootNames.All(n => n[leadingMatches] == extraRootNames[0][leadingMatches]))
+                        {
+                            bool isFullToken = new char[] { '_', '-' }.Contains(extraRootNames[0][leadingMatches]);
+                            leadingMatches++;
+                            if (isFullToken) leadingTokenMatches = leadingMatches;
+                        }
+                        extraRootNames = extraRootNames.Select(n => n.Substring(leadingTokenMatches)).ToList();
+
+                        // Strip matching trailing characters
+                        minLength = extraRootNames.Select(n => n.Length).Min();
+                        int trailingMatches = 0;
+                        while ((trailingMatches < minLength)
+                            && extraRootNames.All(n => n[n.Length - trailingMatches - 1] == extraRootNames[0][extraRootNames[0].Length - trailingMatches - 1]))
+                        {
+                            trailingMatches++;
+                        }
+                        extraRootNames = extraRootNames.Select(n => n.Substring(0, n.Length - trailingMatches)).ToList();
+                    }
+
+                    foreach ((TestProject project, string projectDir, string extraRootName)
+                        in projectList.Zip(projectDirs, extraRootNames))
                     {
                         project.GetKeyNameRootNameAndSuffix(out string _, out string rootName, out string suffix);
-                        string projectDir = Path.GetDirectoryName(project.AbsolutePath)!;
-                        string parent = projectDir;
-                        string newRootName = rootName;
-                        for (int i = 0; i < depth; i++)
+
+                        // If the directory name matches the project name, then don't create the duplicate (e.g.,foo_foo.csproj)
+                        if ((rootName == extraRootName) || (string.IsNullOrEmpty(extraRootName)))
                         {
-                            newRootName += "_" + Path.GetFileName(parent);
-                            parent = Path.GetDirectoryName(parent)!;
+                            continue;
                         }
+
+                        string newRootName = rootName + "_" + extraRootName;
                         string newProjectPath = Path.Combine(projectDir, newRootName + suffix);
+
+                        project.NewAbsolutePath = newProjectPath;
                         File.Move(project.AbsolutePath, newProjectPath, overwrite: false);
                         if (project.IsILProject)
                         {
@@ -1898,7 +1900,7 @@ namespace ILTransform
                     Console.WriteLine("Project: {0}", project.AbsolutePath);
                 }
 
-                AddToMultiMap(_classNameMap, project.TestClassName, project);
+                Utils.AddToMultiMap(_classNameMap, project.TestClassName, project);
 
                 if (project.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum"))
                 {
@@ -1906,12 +1908,7 @@ namespace ILTransform
                 }
 
                 string namespaceClass = project.TestClassNamespace + "#" + project.TestClassName;
-                if (!_namespaceNameMap.TryGetValue(namespaceClass, out Dictionary<DebugOptimize, List<TestProject>>? debugOptProjectMap))
-                {
-                    debugOptProjectMap = new Dictionary<DebugOptimize, List<TestProject>>();
-                    _namespaceNameMap.Add(namespaceClass, debugOptProjectMap);
-                }
-                AddToMultiMap(debugOptProjectMap, project.DebugOptimize, project);
+                Utils.AddToNestedMultiMap(_namespaceNameMap, namespaceClass, project);
 
                 foreach (string file in project.CompileFiles)
                 {
