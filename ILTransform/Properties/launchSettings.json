@@ -2,7 +2,7 @@
   "profiles": {
     "ILTransform": {
       "commandName": "Project",
-      "commandLineArgs": "-n -m d:\\r\\runtime2\\src\\tests\\JIT\\Regression"
+      "commandLineArgs": "-ilfile d:\\r\\runtime2\\src\\tests\\JIT\\Regression"
     }
   }
 }

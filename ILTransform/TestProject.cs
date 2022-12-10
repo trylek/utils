@@ -5,6 +5,7 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -57,6 +58,26 @@ namespace ILTransform
         public static TestCount New() => new TestCount() { Properties = new HashSet<string>(), ItemGroups = new HashSet<string>() };
     }
 
+    public struct SourceInfo
+    {
+        public SourceInfo() { }
+
+        public string TestClassName = "";
+        public List<string> TestClassBases = new List<string>();
+        public string TestClassNamespace = "";
+        public string TestClassSourceFile = "";
+        public int TestClassLine = -1;
+        public string MainMethodName = "";
+        public int FirstMainMethodLine = -1;
+        public int MainTokenMethodLine = -1;
+        public int LastMainMethodLine = -1;
+        public int LastHeaderCommentLine = -1; // will include one blank after comments if it exists
+        public int LastUsingLine = -1;
+        public int NamespaceLine = -1;
+        public bool HasFactAttribute = false;
+        public bool HasExit = false;
+    }
+
     public class TestProject
     {
         public readonly string AbsolutePath;
@@ -70,19 +91,24 @@ namespace ILTransform
         public readonly bool HasRequiresProcessIsolation;
         public readonly string[] RequiresProcessIsolationReasons;
         public readonly string[] CompileFiles;
+        public readonly bool CompileFilesIncludeProjectName;
         public readonly string[] ProjectReferences;
-        public readonly string TestClassName;
-        public readonly string[] TestClassBases;
-        public readonly string TestClassNamespace;
-        public readonly string TestClassSourceFile;
-        public readonly int TestClassLine;
-        public readonly int MainMethodLine;
-        public readonly int LastHeaderCommentLine; // will include one blank after comments if it exists
-        public readonly int LastUsingLine;
-        public readonly int NamespaceLine;
-        public readonly bool HasFactAttribute;
-        public readonly Dictionary<string, string> AllProperties;
-        public readonly HashSet<string> AllItemGroups;
+        public readonly SourceInfo SourceInfo;
+        public string TestClassName => SourceInfo.TestClassName;
+        public List<string> TestClassBases => SourceInfo.TestClassBases;
+        public string TestClassNamespace => SourceInfo.TestClassNamespace;
+        public string TestClassSourceFile => NewTestClassSourceFile ?? SourceInfo.TestClassSourceFile;
+        public int TestClassLine => SourceInfo.TestClassLine;
+        public string MainMethodName => SourceInfo.MainMethodName;
+        public int FirstMainMethodLine => SourceInfo.FirstMainMethodLine;
+        public int MainTokenMethodLine => SourceInfo.MainTokenMethodLine;
+        public int LastMainMethodLine => SourceInfo.LastMainMethodLine;
+        public int LastHeaderCommentLine => SourceInfo.LastHeaderCommentLine;
+        public int LastUsingLine => SourceInfo.LastUsingLine;
+        public int NamespaceLine => SourceInfo.NamespaceLine;
+        public bool HasFactAttribute => SourceInfo.HasFactAttribute;
+        public Dictionary<string, string> AllProperties;
+        public HashSet<string> AllItemGroups;
 
         public readonly bool IsILProject;
 
@@ -91,6 +117,7 @@ namespace ILTransform
         public string? DeduplicatedNamespaceName;
         public bool AddedFactAttribute = false;
         public string? NewAbsolutePath;
+        public string? NewTestClassSourceFile;
 
         public TestProject(
             string absolutePath,
@@ -98,18 +125,9 @@ namespace ILTransform
             Dictionary<string, string> allProperties,
             HashSet<string> allItemGroups,
             string[] compileFiles,
+            bool compileFilesIncludeProjectName,
             string[] projectReferences,
-            string testClassName,
-            string[] testClassBases,
-            string testClassNamespace,
-            string testClassSourceFile,
-            int testClassLine,
-            int mainMethodLine,
-            int lastHeaderCommentLine,
-            int lastUsingLine,
-            int namespaceLine,
-            bool hasFactAttribute,
-            bool hasExit)
+            SourceInfo sourceInfo)
         {
             AbsolutePath = absolutePath;
             RelativePath = relativePath;
@@ -140,22 +158,19 @@ namespace ILTransform
             RequiresProcessIsolationReasons =
                 TestProjectStore.RequiresProcessIsolationProperties.Where(HasProperty).Concat(
                     TestProjectStore.RequiresProcessIsolationItemGroups.Where(HasItemGroup)).Concat(
-                        new[] { "Environment.Exit" }.Where(_ => hasExit)).ToArray();
+                        new[] { "Environment.Exit" }.Where(_ => sourceInfo.HasExit)).ToArray();
 
             CompileFiles = compileFiles;
+            CompileFilesIncludeProjectName = compileFilesIncludeProjectName;
             ProjectReferences = projectReferences;
-            TestClassName = testClassName;
-            TestClassBases = testClassBases;
-            TestClassNamespace = testClassNamespace;
-            TestClassSourceFile = testClassSourceFile;
-            TestClassLine = testClassLine;
-            MainMethodLine = mainMethodLine;
-            LastHeaderCommentLine = lastHeaderCommentLine;
-            LastUsingLine = lastUsingLine;
-            NamespaceLine = namespaceLine;
-            HasFactAttribute = hasFactAttribute;
+            SourceInfo = sourceInfo;
 
             IsILProject = Path.GetExtension(RelativePath).ToLower() == ".ilproj";
+
+            if (IsILProject && CompileFiles.Length != 1)
+            {
+                Console.WriteLine($"More than one IL file in {AbsolutePath}");
+            }
         }
 
         public bool NeedsRequiresProcessIsolation => RequiresProcessIsolationReasons.Length > 0;
@@ -401,9 +416,9 @@ namespace ILTransform
             return true;
         }
 
-        public void GetKeyNameRootNameAndSuffix(out string keyName, out string rootName, out string suffix)
+        public static void GetKeyNameRootNameAndSuffix(string path, out string keyName, out string rootName, out string suffix)
         {
-            string fileName = Path.GetFileName(RelativePath);
+            string fileName = Path.GetFileName(path);
             suffix = Path.GetExtension(fileName);
             rootName = Path.GetFileNameWithoutExtension(fileName);
             int suffixIndex = rootName.Length;
@@ -438,6 +453,9 @@ namespace ILTransform
             suffix = string.Concat(rootName.AsSpan(suffixIndex), suffix);
             rootName = rootName.Substring(0, suffixIndex);
         }
+
+        public void GetKeyNameRootNameAndSuffix(out string keyName, out string rootName, out string suffix)
+            => GetKeyNameRootNameAndSuffix(RelativePath, out keyName, out rootName, out suffix);
 
         [return: NotNullIfNotNull("defaultValue")]
         private string? GetProperty(string name, string? defaultValue = "")
@@ -477,6 +495,7 @@ namespace ILTransform
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _namespaceNameMap;
         private readonly HashSet<string> _commonClassNames;
         private readonly HashSet<string> _rewrittenFiles;
+        private readonly Dictionary<string, string> _movedFiles;
 
         public TestProjectStore()
         {
@@ -485,6 +504,7 @@ namespace ILTransform
             _namespaceNameMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _commonClassNames = new HashSet<string>();
             _rewrittenFiles = new HashSet<string>();
+            _movedFiles = new Dictionary<string, string>();
         }
 
         public void AddCommonClassName(string className) => _commonClassNames.Add(className);
@@ -930,6 +950,13 @@ namespace ILTransform
             Console.WriteLine("Done rewriting {0} projects in {1} msecs", _projects.Count, sw.ElapsedMilliseconds);
         }
 
+        private static string RenameFileBase(string original, string endToReplace, string newEnd)
+        {
+            if (original.EndsWith(newEnd)) return original;
+            if (!original.EndsWith(endToReplace)) return original;
+            return string.Concat(original.AsSpan(0, original.Length - endToReplace.Length), newEnd);
+        }
+
         public void UnifyDbgRelProjects()
         {
             foreach (TestProject testProject in _projects)
@@ -938,65 +965,61 @@ namespace ILTransform
                 string file = Path.GetFileNameWithoutExtension(testProject.RelativePath);
                 string ext = Path.GetExtension(testProject.RelativePath);
                 string renamedFile = file;
-                if (renamedFile.StartsWith("_il"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(3), "_il");
-                }
-                if (renamedFile.StartsWith("_speed_dbg"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(10), "_do");
-                }
-                else if (renamedFile.StartsWith("_speed_rel"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(10), "_ro");
-                }
-                else if (renamedFile.StartsWith("_opt_dbg"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(8), "_do");
-                }
-                else if (renamedFile.StartsWith("_opt_rel"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(8), "_ro");
-                }
-                else if (renamedFile.StartsWith("_odbg"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(5), "_do");
-                }
-                else if (renamedFile.StartsWith("_orel"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(5), "_ro");
-                }
-                else if (renamedFile.StartsWith("_dbg"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(4), "_d");
-                }
-                else if (renamedFile.StartsWith("_rel"))
-                {
-                    renamedFile = string.Concat(renamedFile.AsSpan(4), "_r");
-                }
+                // What was this doing?
+                //if (renamedFile.StartsWith("_il"))
+                //{
+                //    renamedFile = string.Concat(renamedFile.AsSpan(3), "_il");
+                //}
+                renamedFile = RenameFileBase(renamedFile, "_speed_dbg", "_do");
+                renamedFile = RenameFileBase(renamedFile, "_speed_rel", "_ro");
+                renamedFile = RenameFileBase(renamedFile, "_opt_dbg", "_do");
+                renamedFile = RenameFileBase(renamedFile, "_opt_rel", "_ro");
+                renamedFile = RenameFileBase(renamedFile, "_odbg", "_do");
+                renamedFile = RenameFileBase(renamedFile, "_orel", "_ro");
+                renamedFile = RenameFileBase(renamedFile, "_dbg", "_d");
+                renamedFile = RenameFileBase(renamedFile, "_rel", "_r");
+                renamedFile = RenameFileBase(renamedFile, "-dbg", "_d");
+                renamedFile = RenameFileBase(renamedFile, "-ret", "_r");
                 if (testProject.IsILProject)
                 {
-                    if (renamedFile.EndsWith("_d") && !renamedFile.EndsWith("_il_d"))
+                    renamedFile = RenameFileBase(renamedFile, "_d", "_il_d");
+                    renamedFile = RenameFileBase(renamedFile, "_do", "_il_do");
+                    renamedFile = RenameFileBase(renamedFile, "_r", "_il_r");
+                    renamedFile = RenameFileBase(renamedFile, "_ro", "_il_ro");
+                }
+
+                // This doesn't really fit into UnifyDbgRelProjects but is about project renaming,
+                // so it's here for now.
+                if (testProject.IsILProject)
+                {
+                    TestProject.GetKeyNameRootNameAndSuffix(renamedFile, out _, out string rootName, out _);
+                    string sourceRootName = Path.GetFileNameWithoutExtension(testProject.CompileFiles.Single());
+
+                    if ((rootName != sourceRootName)
+                        && string.Equals(rootName, sourceRootName, StringComparison.OrdinalIgnoreCase))
                     {
-                        renamedFile = string.Concat(renamedFile.AsSpan(0, renamedFile.Length - 2), "_il_d");
-                    }
-                    else if (renamedFile.EndsWith("_do") && !renamedFile.EndsWith("_il_do"))
-                    {
-                        renamedFile = string.Concat(renamedFile.AsSpan(0, renamedFile.Length - 3), "_il_do");
-                    }
-                    else if (renamedFile.EndsWith("_r") && !renamedFile.EndsWith("_il_r"))
-                    {
-                        renamedFile = string.Concat(renamedFile.AsSpan(0, renamedFile.Length - 2), "_il_r");
-                    }
-                    else if (renamedFile.EndsWith("_ro") && !renamedFile.EndsWith("_il_ro"))
-                    {
-                        renamedFile = string.Concat(renamedFile.AsSpan(0, renamedFile.Length - 3), "_il_ro");
+                        // HACK: If we have "foo.ilproj" and "Foo.il", we'll have trouble doing the
+                        // case-sensitive rename of "Foo.il" to "foo.il", so we'll use "foo_.ilproj"
+                        // instead and then the rename to foo_.il will work.
+
+                        // And if we're going to this trouble anyway, see if the name has a case
+                        // mismatch with the directory name.
+
+                        string innerDirectoryName = Path.GetFileName(dir);
+                        if ((renamedFile != innerDirectoryName)
+                            && string.Equals(renamedFile, innerDirectoryName, StringComparison.OrdinalIgnoreCase))
+                        {
+                            renamedFile = innerDirectoryName;
+                        }
+
+                        renamedFile += "_";
                     }
                 }
+
                 if (renamedFile != file)
                 {
                     string renamedPath = Path.Combine(dir, renamedFile + ext);
-                    File.Move(testProject.AbsolutePath, renamedPath, overwrite: false);
+                    Utils.FileMove(testProject.AbsolutePath, renamedPath, overwrite: false);
                 }
             }
         }
@@ -1027,7 +1050,7 @@ namespace ILTransform
                         }
                     }
 
-                    testProject.GetKeyNameRootNameAndSuffix(out string keyName, out string _, out string _);
+                    testProject.GetKeyNameRootNameAndSuffix(out string keyName, out _, out _);
                     Utils.AddToMultiMap(rootNameToProjectMap, keyName, testProject);
                 }
 
@@ -1087,8 +1110,7 @@ namespace ILTransform
                     }
                     else
                     {
-                        //! TODO: do next by tokens around -, _
-                        // Extra the 'depth'th directory name
+                        // Extract the 'depth'th directory name
                         {
                             IEnumerable<string> extraRootNameEnum = projectDirs;
                             for (int i = 1; i < depth; ++i)
@@ -1117,18 +1139,21 @@ namespace ILTransform
                         // Strip matching trailing characters
                         minLength = extraRootNames.Select(n => n.Length).Min();
                         int trailingMatches = 0;
+                        int trailingTokenMatches = 0;
                         while ((trailingMatches < minLength)
                             && extraRootNames.All(n => n[n.Length - trailingMatches - 1] == extraRootNames[0][extraRootNames[0].Length - trailingMatches - 1]))
                         {
+                            bool isFullToken = new char[] { '_', '-' }.Contains(extraRootNames[0][leadingMatches]);
                             trailingMatches++;
+                            if (isFullToken) trailingTokenMatches = trailingMatches;
                         }
-                        extraRootNames = extraRootNames.Select(n => n.Substring(0, n.Length - trailingMatches)).ToList();
+                        extraRootNames = extraRootNames.Select(n => n.Substring(0, n.Length - trailingTokenMatches)).ToList();
                     }
 
                     foreach ((TestProject project, string projectDir, string extraRootName)
                         in projectList.Zip(projectDirs, extraRootNames))
                     {
-                        project.GetKeyNameRootNameAndSuffix(out string _, out string rootName, out string suffix);
+                        project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out string suffix);
 
                         // If the directory name matches the project name, then don't create the duplicate (e.g.,foo_foo.csproj)
                         if ((rootName == extraRootName) || (string.IsNullOrEmpty(extraRootName)))
@@ -1140,29 +1165,54 @@ namespace ILTransform
                         string newProjectPath = Path.Combine(projectDir, newRootName + suffix);
 
                         project.NewAbsolutePath = newProjectPath;
-                        File.Move(project.AbsolutePath, newProjectPath, overwrite: false);
-                        if (project.IsILProject)
-                        {
-                            RenameAssembly(project, rootName, newRootName);
-                        }
+                        Utils.FileMove(project.AbsolutePath, newProjectPath, overwrite: false);
                     }
                 }
             }
         }
 
-        private void RenameAssembly(TestProject project, string oldAssemblyName, string newAssemblyName)
+        public void FixILFileNames()
         {
-            string[] source = File.ReadAllLines(project.TestClassSourceFile);
-            for (int lineIndex = 0; lineIndex < source.Length; lineIndex++)
+            foreach (TestProject testProject in _projects)
             {
-                string line = source[lineIndex];
-                if (line.Contains(".assembly") && line.Contains(oldAssemblyName))
+                if (!testProject.IsILProject) continue;
+                if (string.IsNullOrEmpty(testProject.TestClassSourceFile)) continue;
+
+                string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
+
+                string dir = Path.GetDirectoryName(testProject.TestClassSourceFile)!;
+                string rootName = Path.GetFileNameWithoutExtension(testProject.TestClassSourceFile);
+                string extension = Path.GetExtension(testProject.TestClassSourceFile); // should be .il
+
+                TestProject.GetKeyNameRootNameAndSuffix(
+                    testProject.NewAbsolutePath ?? testProject.AbsolutePath,
+                    out _,
+                    out string projectRootName,
+                    out _);
+                string newSourceFile = string.Concat(dir, Path.DirectorySeparatorChar, projectRootName, extension);
+
+                if (rootName != projectRootName)
                 {
-                    source[lineIndex] = TestProject.ReplaceIdentifier(line, oldAssemblyName, newAssemblyName);
-                    File.WriteAllLines(project.TestClassSourceFile, source);
-                    break;
+                    if (_movedFiles.TryAdd(testProject.TestClassSourceFile, newSourceFile))
+                    {
+                        Utils.FileMove(testProject.TestClassSourceFile, newSourceFile);
+                    }
+                    else
+                    {
+                        // Already moved this file. Check that the targets match.
+                        string prevCopy = _movedFiles[testProject.TestClassSourceFile];
+                        if (newSourceFile != prevCopy)
+                        {
+                            Console.WriteLine($"Conflict in moving {testProject.TestClassSourceFile}");
+                            Console.WriteLine($"to {newSourceFile}");
+                            Console.WriteLine($"and {prevCopy}");
+                        }
+                    }
+                    testProject.NewTestClassSourceFile = newSourceFile;
+                    testProject.CompileFiles[0] = newSourceFile;
                 }
             }
+
         }
 
         public void GenerateAllWrappers(string outputDir)
@@ -1328,6 +1378,7 @@ namespace ILTransform
             string projectDir = Path.GetDirectoryName(absolutePath)!;
 
             List<string> compileFiles = new List<string>();
+            bool compileFilesIncludeProjectName = false;
             List<string> projectReferences = new List<string>();
             Dictionary<string, string> allProperties = new Dictionary<string, string>();
             HashSet<string> allItemGroups = new HashSet<string>();
@@ -1367,6 +1418,11 @@ namespace ILTransform
                                             string[] compileFileArray = compileFileList.Split(' ');
                                             foreach (string compileFile in compileFileArray)
                                             {
+                                                if (compileFile.Contains("$(MSBuildProjectName)"))
+                                                {
+                                                    compileFilesIncludeProjectName = true;
+                                                }
+                                                allProperties[compileFile] = compileFile;
                                                 string file = compileFile
                                                     .Replace("$(MSBuildProjectName)", projectName)
                                                     .Replace("$(MSBuildThisFileName)", projectName)
@@ -1392,34 +1448,12 @@ namespace ILTransform
                 }
             }
 
-            string testClassName = "";
-            List<string> testClassBases = new List<string>();
-            string testClassNamespace = "";
-            string testClassSourceFile = "";
-            int testClassLine = -1;
-            int mainMethodLine = -1;
-            int lastHeaderCommentLine = -1;
-            int lastUsingLine = -1;
-            int namespaceLine = -1;
-            bool hasFactAttribute = false;
-            bool hasExit = false;
+            SourceInfo sourceInfo = new SourceInfo();
             foreach (string compileFile in compileFiles)
             {
                 try
                 {
-                    AnalyzeSource(
-                        compileFile,
-                        testClassName: ref testClassName,
-                        testClassBases: ref testClassBases,
-                        testClassNamespace: ref testClassNamespace,
-                        testClassSourceFile: ref testClassSourceFile,
-                        testClassLine: ref testClassLine,
-                        mainMethodLine: ref mainMethodLine,
-                        lastHeaderCommentLine: ref lastHeaderCommentLine,
-                        lastUsingLine: ref lastUsingLine,
-                        namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute,
-                        hasExit: ref hasExit);
+                    AnalyzeSource(compileFile, ref sourceInfo);
                 }
                 catch (Exception ex)
                 {
@@ -1433,50 +1467,19 @@ namespace ILTransform
                 allProperties: allProperties,
                 allItemGroups: allItemGroups,
                 compileFiles: compileFiles.ToArray(),
+                compileFilesIncludeProjectName: compileFilesIncludeProjectName,
                 projectReferences: projectReferences.ToArray(),
-                testClassName: testClassName,
-                testClassBases: testClassBases.ToArray(),
-                testClassNamespace: testClassNamespace,
-                testClassSourceFile: testClassSourceFile,
-                testClassLine: testClassLine,
-                mainMethodLine: mainMethodLine,
-                lastHeaderCommentLine: lastHeaderCommentLine,
-                lastUsingLine: lastUsingLine,
-                namespaceLine: namespaceLine,
-                hasFactAttribute: hasFactAttribute,
-                hasExit: hasExit));
+                sourceInfo: sourceInfo));
         }
 
         private static void AnalyzeSource(
             string path,
-            ref string testClassName,
-            ref List<string> testClassBases,
-            ref string testClassNamespace,
-            ref string testClassSourceFile,
-            ref int testClassLine,
-            ref int mainMethodLine,
-            ref int lastHeaderCommentLine,
-            ref int lastUsingLine,
-            ref int namespaceLine,
-            ref bool hasFactAttribute,
-            ref bool hasExit)
+            ref SourceInfo sourceInfo)
         {
             if (path.IndexOf('*') < 0 && path.IndexOf('?') < 0)
             {
                 // Exact path
-                AnalyzeFileSource(
-                    path: path,
-                    testClassName: ref testClassName,
-                    testClassBases: ref testClassBases,
-                    testClassNamespace: ref testClassNamespace,
-                    testClassSourceFile: ref testClassSourceFile,
-                    testClassLine: ref testClassLine,
-                    mainMethodLine: ref mainMethodLine,
-                    lastHeaderCommentLine: ref lastHeaderCommentLine,
-                    lastUsingLine: ref lastUsingLine,
-                    namespaceLine: ref namespaceLine,
-                    hasFactAttribute: ref hasFactAttribute,
-                    hasExit: ref hasExit);
+                AnalyzeFileSource(path, ref sourceInfo);
                 return;
             }
 
@@ -1496,68 +1499,22 @@ namespace ILTransform
 
             foreach (string file in Directory.EnumerateFiles(directory, pattern, searchOption))
             {
-                AnalyzeFileSource(
-                    path: file,
-                    testClassName: ref testClassName,
-                    testClassBases: ref testClassBases,
-                    testClassNamespace: ref testClassNamespace,
-                    testClassSourceFile: ref testClassSourceFile,
-                    testClassLine: ref testClassLine,
-                    mainMethodLine: ref mainMethodLine,
-                    lastHeaderCommentLine: ref lastHeaderCommentLine,
-                    lastUsingLine: ref lastUsingLine,
-                    namespaceLine: ref namespaceLine,
-                    hasFactAttribute: ref hasFactAttribute,
-                    hasExit: ref hasExit);
+                AnalyzeFileSource(file, ref sourceInfo);
             }
         }
 
         private static void AnalyzeFileSource(
             string path,
-            ref string testClassName,
-            ref List<string> testClassBases,
-            ref string testClassNamespace,
-            ref string testClassSourceFile,
-            ref int testClassLine,
-            ref int mainMethodLine,
-            ref int lastHeaderCommentLine,
-            ref int lastUsingLine,
-            ref int namespaceLine,
-            ref bool hasFactAttribute,
-            ref bool hasExit)
+            ref SourceInfo sourceInfo)
         {
             switch (Path.GetExtension(path).ToLower())
             {
                 case ".il":
-                    AnalyzeILSource(
-                        path: path,
-                        testClassName: ref testClassName,
-                        testClassBases: ref testClassBases,
-                        testClassNamespace: ref testClassNamespace,
-                        testClassSourceFile: ref testClassSourceFile,
-                        testClassLine: ref testClassLine,
-                        mainMethodLine: ref mainMethodLine,
-                        lastHeaderCommentLine: ref lastHeaderCommentLine,
-                        lastUsingLine: ref lastUsingLine,
-                        namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute,
-                        hasExit: ref hasExit);
+                    AnalyzeILSource(path, ref sourceInfo);
                     break;
 
                 case ".cs":
-                    AnalyzeCSSource(
-                        path: path,
-                        testClassName: ref testClassName,
-                        testClassBases: ref testClassBases,
-                        testClassNamespace: ref testClassNamespace,
-                        testClassSourceFile: ref testClassSourceFile,
-                        testClassLine: ref testClassLine,
-                        mainMethodLine: ref mainMethodLine,
-                        lastHeaderCommentLine: ref lastHeaderCommentLine,
-                        lastUsingLine: ref lastUsingLine,
-                        namespaceLine: ref namespaceLine,
-                        hasFactAttribute: ref hasFactAttribute,
-                        hasExit: ref hasExit);
+                    AnalyzeCSSource(path, ref sourceInfo);
                     break;
 
                 default:
@@ -1576,19 +1533,7 @@ namespace ILTransform
             return indent;
         }
 
-        private static void AnalyzeCSSource(
-            string path,
-            ref string testClassName,
-            ref List<string> testClassBases,
-            ref string testClassNamespace,
-            ref string testClassSourceFile,
-            ref int testClassLine,
-            ref int mainMethodLine,
-            ref int lastHeaderCommentLine,
-            ref int lastUsingLine,
-            ref int namespaceLine,
-            ref bool hasFactAttribute,
-            ref bool hasExit)
+        private static void AnalyzeCSSource(string path, ref SourceInfo sourceInfo)
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));
 
@@ -1599,7 +1544,7 @@ namespace ILTransform
 
             if (lines.Any(line => line.Contains("Environment.Exit")))
             {
-                hasExit = true;
+                sourceInfo.HasExit = true;
             }
 
             bool isMainFile = false;
@@ -1608,17 +1553,33 @@ namespace ILTransform
                 string line = lines[mainLine];
                 if (line.Contains("[Fact]") || line.Contains("[ConditionalFact]"))
                 {
-                    hasFactAttribute = true;
+                    sourceInfo.HasFactAttribute = true;
                     isMainFile = true;
                 }
 
-                bool foundMain = line.Contains("int Main()") || line.Contains("TestEntrypoint()");
-                if (foundMain)
+                bool foundEntryPoint = false;
+                if (line.Contains("int Main()"))
+                {
+                    sourceInfo.MainMethodName = "Main";
+                    foundEntryPoint = true;
+                }
+                else if (line.Contains("TestEntrypoint()"))
+                {
+                    sourceInfo.MainMethodName = "TestEntrypoint";
+                    foundEntryPoint = true;
+                }
+
+                if (foundEntryPoint)
                 {
                     int mainLineIndent = GetIndent(line);
-                    mainMethodLine = mainLine;
+
+                    // First and Last aren't accurate here
+                    sourceInfo.FirstMainMethodLine = mainLine;
+                    sourceInfo.MainTokenMethodLine = mainLine;
+                    sourceInfo.LastMainMethodLine = mainLine;
+
                     isMainFile = true;
-                    testClassSourceFile = path;
+                    sourceInfo.TestClassSourceFile = path;
                     while (--mainLine >= 0)
                     {
                         line = lines[mainLine];
@@ -1640,8 +1601,8 @@ namespace ILTransform
                                     {
                                         classNameEnd++;
                                     }
-                                    testClassName = line.Substring(classNameStart, classNameEnd - classNameStart);
-                                    testClassLine = mainLine;
+                                    sourceInfo.TestClassName = line.Substring(classNameStart, classNameEnd - classNameStart);
+                                    sourceInfo.TestClassLine = mainLine;
 
                                     int basePos = classNameEnd;
                                     while (basePos < line.Length && char.IsWhiteSpace(line[basePos]))
@@ -1685,7 +1646,7 @@ namespace ILTransform
                                             }
                                             if (basePos > baseIdentBegin)
                                             {
-                                                testClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
+                                                sourceInfo.TestClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
                                             }
                                         }
                                     }
@@ -1702,7 +1663,7 @@ namespace ILTransform
                                                 namespaceNameEnd++;
                                             }
                                             string namespaceName = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
-                                            testClassName = namespaceName + "." + testClassName;
+                                            sourceInfo.TestClassName = namespaceName + "." + sourceInfo.TestClassName;
                                         }
                                     }
                                 }
@@ -1717,7 +1678,7 @@ namespace ILTransform
             if (isMainFile)
             {
                 {
-                    lastHeaderCommentLine = -1;
+                    sourceInfo.LastHeaderCommentLine = -1;
                     int lineIndex;
                     for (lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                     {
@@ -1726,35 +1687,35 @@ namespace ILTransform
                         {
                             break;
                         }
-                        lastHeaderCommentLine = lineIndex;
+                        sourceInfo.LastHeaderCommentLine = lineIndex;
                     }
                     if (lineIndex < lines.Count)
                     {
                         if (string.IsNullOrWhiteSpace(lines[lineIndex]))
                         {
-                            lastHeaderCommentLine = lineIndex;
+                            sourceInfo.LastHeaderCommentLine = lineIndex;
                         }
                     }
                 }
 
-                lastUsingLine = -1;
+                sourceInfo.LastUsingLine = -1;
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
                     string line = lines[lineIndex];
                     if (line.StartsWith("using"))
                     {
-                        lastUsingLine = lineIndex;
+                        sourceInfo.LastUsingLine = lineIndex;
                     }
                 }
 
-                for (int lineIndex = lastUsingLine + 1; lineIndex < lines.Count; lineIndex++)
+                for (int lineIndex = sourceInfo.LastUsingLine + 1; lineIndex < lines.Count; lineIndex++)
                 {
                     string line = lines[lineIndex].Trim();
                     if (line == "" || line.StartsWith("//"))
                     {
                         continue;
                     }
-                    namespaceLine = lineIndex;
+                    sourceInfo.NamespaceLine = lineIndex;
                     if (line.StartsWith("namespace "))
                     {
                         int namespaceNameStart = 10;
@@ -1763,26 +1724,14 @@ namespace ILTransform
                         {
                             namespaceNameEnd++;
                         }
-                        testClassNamespace = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
+                        sourceInfo.TestClassNamespace = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
                     }
                     break;
                 }
             }
         }
 
-        private static void AnalyzeILSource(
-            string path,
-            ref string testClassName,
-            ref List<string> testClassBases,
-            ref string testClassNamespace,
-            ref string testClassSourceFile,
-            ref int testClassLine,
-            ref int mainMethodLine,
-            ref int lastHeaderCommentLine,
-            ref int lastUsingLine,
-            ref int namespaceLine,
-            ref bool hasFactAttribute,
-            ref bool hasExit)
+        private static void AnalyzeILSource(string path, ref SourceInfo sourceInfo)
         {
             if (Path.GetFileName(path) == "han3.il")
             {
@@ -1793,99 +1742,130 @@ namespace ILTransform
 
             if (lines.Any(line => line.Contains("Environment::Exit")))
             {
-                hasExit = true;
+                sourceInfo.HasExit = true;
             }
 
-            int lineIndex = lines.Count;
-            while (--lineIndex >= 0)
+            AnalyzeILSourceForEntryPoint(path, lines, ref sourceInfo);
+
+            if (sourceInfo.NamespaceLine < 0)
             {
-                string line = lines[lineIndex];
-                if (line.Contains(".entrypoint"))
+                int index = lines.FindIndex(line => line.Contains(".class") || line.Contains(".struct"));
+                if (index >= 0)
                 {
-                    break;
-                }
-            }
-
-            while (--lineIndex >= 0 && !lines[lineIndex].Contains(".method"))
-            {
-            }
-
-            if (lineIndex >= 0 && lines[lineIndex].Contains("static"))
-            {
-                for (int endIndex = lineIndex + 2; lineIndex < endIndex; lineIndex++)
-                {
-                    const string MainTag = " Main(";
-                    const string mainTag = " main(";
-                    string line = lines[lineIndex];
-                    int mainPos = line.IndexOf(MainTag);
-                    if (mainPos < 0)
-                    {
-                        mainPos = line.IndexOf(mainTag);
-                    }
-                    if (mainPos >= 0)
-                    {
-                        hasFactAttribute = true;
-                        mainMethodLine = lineIndex;
-                        for (int factIndex = lineIndex; factIndex < lineIndex + 10 && factIndex < lines.Count; factIndex++)
-                        {
-                            if (lines[factIndex].Contains("FactAttribute"))
-                            {
-                                hasFactAttribute = true;
-                                break;
-                            }
-                        }
-                    }
-                    const string TestEntrypointTag = " TestEntrypoint(";
-                    bool hasEntrypoint = line.Contains(TestEntrypointTag);
-                    if (mainPos >= 0 || hasEntrypoint)
-                    {
-                        testClassSourceFile = path;
-
-                        while (--lineIndex >= 0 && testClassName == "")
-                        {
-                            if (TestProject.GetILClassName(lines[lineIndex], out string? className))
-                            {
-                                testClassName = className!;
-                                testClassLine = lineIndex;
-                                while (--lineIndex >= 0)
-                                {
-                                    string[] components = lines[lineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                                    if (components.Length >= 2 && components[0] == ".namespace")
-                                    {
-                                        string namespaceName = components[1];
-                                        if (namespaceName.StartsWith("\'"))
-                                        {
-                                            namespaceName = namespaceName.Substring(1, namespaceName.Length - 2);
-                                        }
-                                        testClassNamespace = namespaceName;
-                                        namespaceLine = lineIndex;
-                                        testClassName = namespaceName + "." + testClassName;
-                                    }
-                                }
-                                break;
-                            }
-                        }
-
-                        break;
-                    }
-                }
-            }
-
-            if (namespaceLine < 0)
-            {
-                for (int index = 0; index < lines.Count; index++)
-                {
-                    string line = lines[index];
-                    if (line.Contains(".class") || line.Contains(".struct"))
-                    {
-                        namespaceLine = index;
-                        break;
-                    }
+                    sourceInfo.NamespaceLine = index;
                 }
             }
 
             // IL projects don't actually need the Fact attribute providing they have a Main method
-            hasFactAttribute = (mainMethodLine >= 0);
+            sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodLine >= 0);
+        }
+
+        private static void AnalyzeILSourceForEntryPoint(string path, List<string> lines, ref SourceInfo sourceInfo)
+        {
+            int lineIndex = lines.FindLastIndex(line => line.Contains(".entrypoint"));
+            if (lineIndex == -1)
+            {
+                return;
+            }
+
+            if (lines.FindLastIndex(lineIndex - 1, line => line.Contains(".entrypoint")) >= 0)
+            {
+                Console.WriteLine("Found two .entrypoints in {0}", path);
+                return;
+            }
+
+            lineIndex = lines.FindLastIndex(lineIndex, line => line.Contains(".method"));
+            if (lines.FindLastIndex(lineIndex - 1, line => line.Contains(".entrypoint")) >= 0)
+            {
+                Console.WriteLine("Couldn't find .method for .entrypoint in {0}", path);
+                return;
+            }
+
+            string line = lines[lineIndex];
+            int column = 0;
+
+            Regex[] mainRegexes =
+            {
+                new Regex(@"\.method(?:\s+(?:/\*06000002\*/|public|private|privatescope|assembly|hidebysig))*\s+static"),
+                new Regex(@"\s+(?:int32|unsigned\s+int32|void)(?:\s+modopt\(\[mscorlib\]System\.Runtime\.CompilerServices\.CallConvCdecl\))?"),
+                new Regex(@"\s+(?<main>[^\s(]+)\s*\("),
+                new Regex(@"\s*(?:(?<type>class\s+(?:\[(?:mscorlib|'mscorlib')\])?System\.String|string)\s*\[\s*\](?:\s*(?<arg>[0-9a-zA-z_]+))?|(?<arg>[0-9a-zA-z_]+))?"),
+                new Regex(@"\s*\)"),
+            };
+            const int mainStartRegexIndex = 0;
+            const int mainNameRegexIndex = 2;
+            const int mainEndRegexIndex = 4;
+            List<int> mainMatchLineNumbers = new List<int>();
+            List<Match> mainMatches = new List<Match>();
+
+            for (int regexIndex = 0; regexIndex < mainRegexes.Length; ++regexIndex)
+            {
+                Regex mainRegex = mainRegexes[regexIndex];
+                Match mainMatch = mainRegex.Match(line, column);
+                if (line.Substring(column).All(c => char.IsWhiteSpace(c)))
+                {
+                    lineIndex++;
+                    line = lines[lineIndex];
+                    mainMatch = mainRegex.Match(line);
+                }
+                if (!mainMatch.Success)
+                {
+                    Console.WriteLine("Couldn't match RE #{0} for entrypoint on line {1} in {2}", regexIndex, lineIndex, path);
+                    return;
+                }
+                mainMatchLineNumbers.Add(lineIndex);
+                mainMatches.Add(mainMatch);
+                column = mainMatch.Index + mainMatch.Length;
+            }
+
+            string mainName = mainMatches[mainNameRegexIndex].Groups["main"].Value;
+            if (mainName[0] == '\'' && mainName[mainName.Length - 1] == '\'')
+            {
+                mainName = mainName.Substring(1, mainName.Length - 2);
+            }
+
+            sourceInfo.MainMethodName = mainName;
+            sourceInfo.FirstMainMethodLine = mainMatchLineNumbers[mainStartRegexIndex];
+            sourceInfo.MainTokenMethodLine = mainMatchLineNumbers[mainNameRegexIndex];
+            sourceInfo.LastMainMethodLine = mainMatchLineNumbers[mainEndRegexIndex];
+            if (lines.FindIndex(
+                sourceInfo.LastMainMethodLine,
+                Math.Min(10, lines.Count - sourceInfo.LastMainMethodLine),
+                line => line.Contains("FactAttribute")) >= 0)
+            {
+                sourceInfo.HasFactAttribute = true;
+            }
+
+            // Old code searched for TestEntryPoint( to identify an entry point,
+            // but the above .entrypoint/.method/regex search is enough to know that we have one.
+
+            sourceInfo.TestClassSourceFile = path;
+
+            lineIndex = sourceInfo.FirstMainMethodLine;
+            while (--lineIndex >= 0 && sourceInfo.TestClassName == "")
+            {
+                if (TestProject.GetILClassName(lines[lineIndex], out string? className))
+                {
+                    sourceInfo.TestClassName = className!;
+                    sourceInfo.TestClassLine = lineIndex;
+                    while (--lineIndex >= 0)
+                    {
+                        string[] components = lines[lineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
+                        if (components.Length >= 2 && components[0] == ".namespace")
+                        {
+                            string namespaceName = components[1];
+                            if (namespaceName.StartsWith("\'"))
+                            {
+                                namespaceName = namespaceName.Substring(1, namespaceName.Length - 2);
+                            }
+                            sourceInfo.TestClassNamespace = namespaceName;
+                            sourceInfo.NamespaceLine = lineIndex;
+                            sourceInfo.TestClassName = namespaceName + "." + sourceInfo.TestClassName;
+                        }
+                     }
+                     break;
+                }
+            }
         }
 
         private void PopulateClassNameMap()
@@ -1893,7 +1873,7 @@ namespace ILTransform
             HashSet<string> ilNamespaceClasses = new HashSet<string>();
             Dictionary<string, HashSet<string>> compileFileToFolderNameMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && p.MainMethodLine > 0))
+            foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
             {
                 if (project.RelativePath.Contains("hfa_params"))
                 {

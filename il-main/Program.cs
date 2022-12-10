@@ -105,11 +105,7 @@ static int ProcessFile(string filename, bool verbose, bool onlySearchForJmp, ref
     int entrypointIndex = lines.FindIndex(line => line.Contains(entrypointString));
     if (verbose) Console.WriteLine("entry point {0}", entrypointIndex);
 
-    int mainIndex;
-    for (mainIndex = entrypointIndex; mainIndex >= 0; --mainIndex)
-    {
-        if (lines[mainIndex].Contains(".method")) break;
-    }
+    int mainIndex = lines.FindLastIndex(entrypointIndex, line => line.Contains(".method"));
     if (mainIndex == -1)
     {
         Console.WriteLine("*** no .method in {0}", filename);

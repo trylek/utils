@@ -8,13 +8,15 @@ namespace ILTransform
     public class Settings
     {
         public bool DeduplicateClassNames;
-        public bool DeduplicateProjectNames;
         public string ClassToDeduplicate = "";
+        public bool DeduplicateProjectNames;
+        public bool FixILFileNames;
         public bool FixImplicitSharedLibraries;
         public bool AddILFactAttributes;
         public bool AddProcessIsolation;
         public bool UnifyDbgRelProjects;
-        public bool CleanupILModuleAssembly;
+        public bool CleanupILModule;
+        public bool CleanupILAssembly;
 
         public bool UncategorizedCleanup;
     }
@@ -43,31 +45,39 @@ namespace ILTransform
                                 settings.ClassToDeduplicate = arg.Substring(index);
                             }
                         }
-                        else if (arg.StartsWith("-i"))
+                        else if (arg == "-i")
                         {
                             settings.FixImplicitSharedLibraries = true;
                         }
-                        else if (arg.StartsWith("-f"))
+                        else if (arg == "-ilfact")
                         {
                             settings.AddILFactAttributes = true;
                         }
-                        else if (arg.StartsWith("-s"))
+                        else if (arg == "-prociso")
                         {
                             settings.AddProcessIsolation = true;
                         }
-                        else if (arg.StartsWith("-p"))
+                        else if (arg == "-p")
                         {
                             settings.UnifyDbgRelProjects = true;
                         }
-                        else if (arg.StartsWith("-m"))
+                        else if (arg == "-m")
                         {
-                            settings.CleanupILModuleAssembly = true;
+                            settings.CleanupILModule = true;
                         }
-                        else if (arg.StartsWith("-n"))
+                        else if (arg == "-a")
+                        {
+                            settings.CleanupILAssembly = true;
+                        }
+                        else if (arg == "-n")
                         {
                             settings.DeduplicateProjectNames = true;
                         }
-                        else if (arg.StartsWith("-z"))
+                        else if (arg == "-ilfile")
+                        {
+                            settings.FixILFileNames = true;
+                        }
+                        else if (arg == "-z")
                         {
                             settings.UncategorizedCleanup = true;
                         }
@@ -114,8 +124,15 @@ namespace ILTransform
                 {
                     testStore.DeduplicateProjectNames();
                 }
+                if (settings.FixILFileNames)
+                {
+                    testStore.FixILFileNames();
+                }
 
-                testStore.RewriteAllTests(settings);
+                if (!settings.UnifyDbgRelProjects)
+                {
+                    testStore.RewriteAllTests(settings);
+                }
                 if (settings.UncategorizedCleanup && !settings.DeduplicateClassNames && !settings.AddProcessIsolation && !settings.AddILFactAttributes)
                 {
                     testStore.GenerateAllWrappers(wrapperRoot);

@@ -44,5 +44,15 @@ namespace ILTransform
             Utils.AddToMultiMap(multiMap, project.DebugOptimize, project);
         }
 
+        internal static void FileMove(string sourceFileName, string destFileName, bool overwrite = false)
+        {
+            if (sourceFileName == destFileName) return;
+            //Console.WriteLine($"Move file: {sourceFileName} => {destFileName}");
+            if (string.Equals(sourceFileName, destFileName, StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"Case-sensitive move from {sourceFileName} to {destFileName}");
+            }
+            File.Move(sourceFileName, destFileName, overwrite);
+        }
     }
 }
