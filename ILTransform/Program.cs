@@ -2,6 +2,7 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Runtime.CompilerServices;
 
 namespace ILTransform
 {
@@ -13,13 +14,14 @@ namespace ILTransform
         public bool FixILFileNames;
         public bool FixImplicitSharedLibraries;
         public bool AddILFactAttributes;
+        public bool MakePublic;
         public bool AddProcessIsolation;
         public bool UnifyDbgRelProjects;
         public bool CleanupILModule;
         public bool CleanupILAssembly;
-
-        public bool UncategorizedCleanup;
+        public bool GenerateWrappers;
     }
+
     public class Program
     {
         public static int Main(string[] args)
@@ -53,6 +55,10 @@ namespace ILTransform
                         {
                             settings.AddILFactAttributes = true;
                         }
+                        else if (arg == "-public")
+                        {
+                            settings.MakePublic = true;
+                        }
                         else if (arg == "-prociso")
                         {
                             settings.AddProcessIsolation = true;
@@ -77,9 +83,9 @@ namespace ILTransform
                         {
                             settings.FixILFileNames = true;
                         }
-                        else if (arg == "-z")
+                        else if (arg == "-w")
                         {
-                            settings.UncategorizedCleanup = true;
+                            settings.GenerateWrappers = true;
                         }
                         else
                         {
@@ -92,6 +98,20 @@ namespace ILTransform
                     }
                 }
 
+                if (settings.UnifyDbgRelProjects
+                    && (settings.DeduplicateProjectNames
+                        || settings.FixILFileNames
+                        || settings.FixImplicitSharedLibraries
+                        || settings.AddILFactAttributes
+                        || settings.MakePublic
+                        || settings.AddProcessIsolation
+                        || settings.UnifyDbgRelProjects
+                        || settings.CleanupILModule
+                        || settings.CleanupILAssembly
+                        || settings.GenerateWrappers))
+                {
+                    throw new Exception("-p is not compatible with other rewriting options");
+                }
 
                 if (testRoots.Count() == 0)
                 {
@@ -133,7 +153,7 @@ namespace ILTransform
                 {
                     testStore.RewriteAllTests(settings);
                 }
-                if (settings.UncategorizedCleanup && !settings.DeduplicateClassNames && !settings.AddProcessIsolation && !settings.AddILFactAttributes)
+                if (settings.GenerateWrappers)
                 {
                     testStore.GenerateAllWrappers(wrapperRoot);
                 }

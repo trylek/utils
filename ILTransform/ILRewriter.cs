@@ -64,18 +64,26 @@ namespace ILTransform
             _rewrittenFiles = rewrittenFiles;
         }
 
+        // Side effects: Rewrites CS/IL source file and proj file
         public void Rewrite()
         {
             if (!string.IsNullOrEmpty(_testProject.TestClassSourceFile) && _rewrittenFiles.Add(_testProject.TestClassSourceFile))
             {
                 RewriteFile(_testProject.TestClassSourceFile);
             }
-            if (!_settings.DeduplicateClassNames)
-            {
-                RewriteProject(_testProject.NewAbsolutePath ?? _testProject.AbsolutePath);
-            }
+
+            RewriteProject(_testProject.NewAbsolutePath ?? _testProject.AbsolutePath);
         }
 
+        // Side effect: Rewrites CS/IL source file (depends on _settings):
+        // - Add Fact attribute
+        // - Make classes/methods public
+        // - Put Main in a class
+        // - Remove assembly reference to xunit.core
+        // - Add assembly reference to xunit
+        // - Rename main namespace/class to deduplicate them across tests
+        // - Remove .module
+        // - Rename .assembly
         private void RewriteFile(string source)
         {
             List<string> lines = new List<string>(File.ReadAllLines(source));
@@ -87,38 +95,41 @@ namespace ILTransform
                 Console.WriteLine("RewriteFile: {0}", source);
             }
 
-            if (!string.IsNullOrEmpty(_testProject.MainMethodName) /*&& !_settings.CleanupILModuleAssembly*/)
+            if (!string.IsNullOrEmpty(_testProject.MainMethodName))
             {
                 int lineIndex = _testProject.LastMainMethodLine;
                 if (lineIndex >= 0)
                 {
-                    int lineInBody = lines.FindIndex(lineIndex, line => line.Contains('{') || (!isILTest && line.Contains("=>")));
-                    if (lineInBody == -1)
+                    if (_settings.AddILFactAttributes)
                     {
-                        Console.Error.WriteLine("Opening brace or => for main method not found in file: {0}", source);
+                        int lineInBody = lines.FindIndex(lineIndex, line => line.Contains('{') || (!isILTest && line.Contains("=>")));
+                        if (lineInBody == -1)
+                        {
+                            Console.Error.WriteLine("Opening brace or => for main method not found in file: {0}", source);
+                        }
+
+                        if ((lineInBody >= 0) && !_testProject.HasFactAttribute)
+                        {
+                            int indentLine = (isILTest ? lineInBody + 1 : lineIndex);
+                            string firstMainBodyLine = lines[indentLine];
+                            int indent = TestProject.GetIndent(firstMainBodyLine);
+                            string indentString = firstMainBodyLine.Substring(0, indent);
+                            if (isILTest)
+                            {
+                                InsertIndentedLines(lines, lineInBody + 1, s_factLines, firstMainBodyLine);
+                            }
+                            else
+                            {
+                                lines[_testProject.MainTokenMethodLine] =
+                                    ReplaceIdent(lines[_testProject.MainTokenMethodLine], "Main", "TestEntryPoint");
+                                lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
+                            }
+                            _testProject.AddedFactAttribute = true;
+                            rewritten = true;
+                        }
                     }
 
-                    if ((lineInBody >= 0) && _settings.AddILFactAttributes && !_testProject.HasFactAttribute)
-                    {
-                        int indentLine = (isILTest ? lineInBody + 1 : lineIndex);
-                        string firstMainBodyLine = lines[indentLine];
-                        int indent = TestProject.GetIndent(firstMainBodyLine);
-                        string indentString = firstMainBodyLine.Substring(0, indent);
-                        if (isILTest)
-                        {
-                            InsertIndentedLines(lines, lineInBody + 1, s_factLines, firstMainBodyLine);
-                        }
-                        else
-                        {
-                            lines[_testProject.MainTokenMethodLine] =
-                                ReplaceIdent(lines[_testProject.MainTokenMethodLine], "Main", "TestEntryPoint");
-                            lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
-                        }
-                        _testProject.AddedFactAttribute = true;
-                        rewritten = true;
-                    }
-
-                    if (_settings.UncategorizedCleanup /*&& !_settings.CleanupILModuleAssembly*/)
+                    if (_settings.MakePublic && (_testProject.FirstMainMethodLine != -1))
                     {
                         if (isILTest)
                         {
@@ -140,7 +151,10 @@ namespace ILTransform
                             lines[_testProject.FirstMainMethodLine] = line;
                             rewritten = true;
                         }
+                    }
 
+                    if (_settings.MakePublic)
+                    {
                         foreach (string baseClassName in _testProject.TestClassBases)
                         {
                             for (int index = 0; index < lines.Count; index++)
@@ -198,29 +212,32 @@ namespace ILTransform
                 }
             }
 
-            if (_settings.UncategorizedCleanup && _testProject.TestClassLine < 0)
+            if (_settings.MakePublic)
             {
-                if (isILTest)
+                if (_testProject.TestClassLine >= 0)
                 {
-                    string classLine = $".class public auto ansi Test_{Path.GetFileNameWithoutExtension(source)} extends [mscorlib] System.Object {{";
-                    lines.Insert(_testProject.FirstMainMethodLine, classLine);
-                    lines.Add("}");
+                    string line = lines[_testProject.TestClassLine];
+                    TestProject.MakePublic(isILTest: isILTest, ref line, force: true);
+                    lines[_testProject.TestClassLine] = line;
                     rewritten = true;
                 }
-            }
-            else if (_settings.UncategorizedCleanup /*&& !_settings.CleanupILModuleAssembly*/)
-            {
-                string line = lines[_testProject.TestClassLine];
-                TestProject.MakePublic(isILTest: isILTest, ref line, force: true);
-                lines[_testProject.TestClassLine] = line;
-                rewritten = true;
+                else
+                {
+                    if (isILTest)
+                    {
+                        string classLine = $".class public auto ansi Test_{Path.GetFileNameWithoutExtension(source)} extends [mscorlib] System.Object {{";
+                        lines.Insert(_testProject.FirstMainMethodLine, classLine);
+                        lines.Add("}");
+                        rewritten = true;
+                    }
+                }
             }
 
-            if (!_settings.DeduplicateClassNames /*&& !_settings.CleanupILModuleAssembly*/)
+            if (_settings.AddILFactAttributes)
             {
                 bool hasXunitReference = false;
                 string testName = _testProject.TestProjectAlias!;
-                bool addFactAttribute = _settings.AddILFactAttributes && !_testProject.HasFactAttribute && isILTest;
+                bool addFactAttribute = !_testProject.HasFactAttribute && isILTest;
                 if (isILTest)
                 {
                     for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
@@ -321,10 +338,12 @@ namespace ILTransform
                         */
                     }
                 }
+            }
 
-                if (_settings.UncategorizedCleanup
-                    && _testProject.TestClassNamespace == ""
-                    && _testProject.DeduplicatedNamespaceName != null)
+            if (_settings.DeduplicateClassNames
+                && _testProject.DeduplicatedNamespaceName != null)
+            {
+                if (_testProject.TestClassNamespace == "")
                 {
                     int lineIndex = _testProject.NamespaceLine;
                     lines.Insert(lineIndex, (isILTest ? "." : "") + "namespace " + _testProject.DeduplicatedNamespaceName);
@@ -344,41 +363,42 @@ namespace ILTransform
                             }
                         }
                     }
-
-                    rewritten = true;
                 }
-                else if (_settings.UncategorizedCleanup
-                    && _testProject.DeduplicatedNamespaceName != null)
+                else
                 {
                     if (isILTest)
                     {
                         for (int lineIndex = _testProject.NamespaceLine; lineIndex < lines.Count; lineIndex++)
                         {
-                            lines[lineIndex] = ReplaceIdent(lines[lineIndex], _testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName, IdentKind.Namespace);
+                            lines[lineIndex] = ReplaceIdent(
+                                lines[lineIndex],
+                                _testProject.TestClassNamespace,
+                                _testProject.DeduplicatedNamespaceName,
+                                IdentKind.Namespace);
                         }
                     }
                     else
                     {
-                        lines[_testProject.NamespaceLine] = lines[_testProject.NamespaceLine].Replace(_testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName);
+                        lines[_testProject.NamespaceLine] =
+                            lines[_testProject.NamespaceLine]
+                            .Replace(_testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName);
                     }
-                    rewritten = true;
                 }
 
-                if (_settings.UncategorizedCleanup && !isILTest)
+                rewritten = true;
+            }
+
+            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines[_testProject.LastUsingLine].Contains("Xunit"));
+            if (_settings.AddILFactAttributes && !isILTest && !usingXUnit)
+            {
+                int rewriteLine = _testProject.LastUsingLine;
+                if (rewriteLine == -1)
                 {
-                    bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines[_testProject.LastUsingLine].Contains("Xunit"));
-                    int rewriteLine = _testProject.LastUsingLine;
-                    if (rewriteLine == -1)
-                    {
-                        rewriteLine = _testProject.LastHeaderCommentLine;
-                    }
-                    rewriteLine++;
-                    if (!usingXUnit)
-                    {
-                        lines.Insert(rewriteLine++, "using Xunit;");
-                        rewritten = true;
-                    }
+                    rewriteLine = _testProject.LastHeaderCommentLine;
                 }
+                rewriteLine++;
+                lines.Insert(rewriteLine++, "using Xunit;");
+                rewritten = true;
             }
 
             if (_settings.CleanupILModule && isILTest)
@@ -462,7 +482,7 @@ namespace ILTransform
                 }
             }
 
-            if (_settings.UncategorizedCleanup && _testProject.DeduplicatedClassName != null)
+            if (_settings.DeduplicateClassNames && _testProject.DeduplicatedClassName != null)
             {
                 for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
                 {
@@ -477,6 +497,10 @@ namespace ILTransform
             }
         }
 
+        // Side effect: rewrites project file
+        // - Add RequiresProcessIsolation
+        // - Remove OutputType Exe
+        // - Updates Compile Include=
         private void RewriteProject(string path)
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));

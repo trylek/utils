@@ -183,6 +183,8 @@ namespace ILTransform
         private static Regex PublicRegex = new Regex(@"public\s+");
         private static Regex NotPublicRegex = new Regex(@"(?:private|internal)(?<ws>\s+)");
 
+        // Side effect: Changes private/internal to public in 'line'
+        // Side effect (force==true): If above fails, adds "public" to 'line'
         public static bool MakePublic(bool isILTest, ref string line, bool force)
         {
             if (PublicRegex.IsMatch(line))
@@ -413,6 +415,11 @@ namespace ILTransform
                     return false;
                 }
             }
+            if (AllProperties.GetValueOrDefault("DefineConstants") != project2.AllProperties.GetValueOrDefault("DefineConstants"))
+            {
+                return false;
+            }
+            // Should we look at all Properties and ItemGroups?
             return true;
         }
 
@@ -521,6 +528,7 @@ namespace ILTransform
             Console.WriteLine("Done scanning {0} projects in {1} msecs", projectCount, sw.ElapsedMilliseconds);
         }
 
+        // Side effect: Sets TestProjectAlias
         public void GenerateExternAliases()
         {
             foreach (TestProject project in _projects)
@@ -775,6 +783,7 @@ namespace ILTransform
 
             writer.WriteLine("PROJECT PAIRS WITH DUPLICATE CONTENT");
             writer.WriteLine("------------------------------------");
+            bool first = true;
             foreach (List<TestProject> projectGroup in potentialDuplicateMap.Values)
             {
                 for (int index1 = 1; index1 < projectGroup.Count; index1++)
@@ -785,13 +794,18 @@ namespace ILTransform
                         TestProject project2 = projectGroup[index2];
                         if (project1.HasSameContentAs(project2))
                         {
+                            if (first)
+                            {
+                                writer.WriteLine();
+                                first = false;
+                            }
                             writer.WriteLine(project1.AbsolutePath);
                             writer.WriteLine(project2.AbsolutePath);
-                            writer.WriteLine();
                         }
                     }
                 }
             }
+            writer.WriteLine();
         }
 
         public void DumpDuplicateSimpleProjectNames(TextWriter writer)
@@ -924,6 +938,7 @@ namespace ILTransform
             writer.WriteLine();
         }
 
+        // Side effects: Rewrite CS/IL source files, rewrite proj files
         public void RewriteAllTests(Settings settings)
         {
             Stopwatch sw = Stopwatch.StartNew();
@@ -957,6 +972,7 @@ namespace ILTransform
             return string.Concat(original.AsSpan(0, original.Length - endToReplace.Length), newEnd);
         }
 
+        // Side effect: renames project files
         public void UnifyDbgRelProjects()
         {
             foreach (TestProject testProject in _projects)
@@ -1026,6 +1042,7 @@ namespace ILTransform
 
         private static string[] s_wrapperGroups = new string[] { "_do", "_ro", "_d", "_r", "" };
 
+        // Side effects: Moves project files, sets NewAbsolutePath
         public void DeduplicateProjectNames()
         {
             foreach (string wrapperGroup in s_wrapperGroups)
@@ -1171,6 +1188,7 @@ namespace ILTransform
             }
         }
 
+        // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
         public void FixILFileNames()
         {
             foreach (TestProject testProject in _projects)
@@ -1215,6 +1233,7 @@ namespace ILTransform
 
         }
 
+        // Side effects: Creates cs/csproj files
         public void GenerateAllWrappers(string outputDir)
         {
             HashSet<DebugOptimize> debugOptimizeMap = new HashSet<DebugOptimize>();
@@ -1228,6 +1247,7 @@ namespace ILTransform
             }
         }
 
+        // Side effects: Creates cs/csproj files
         private void GenerateWrapper(string rootDir, DebugOptimize debugOptimize, int maxProjectsPerWrapper)
         {
             string dbgOptName = "Dbg" + debugOptimize.Debug + "_Opt" + debugOptimize.Optimize;
@@ -1354,6 +1374,7 @@ namespace ILTransform
             }
         }
 
+        // Side effect: Add TestProjects to _projects
         private void ScanRecursive(string absolutePath, string relativePath, ref int projectCount)
         {
             foreach (string absoluteProjectPath in Directory.EnumerateFiles(absolutePath, "*.*proj", SearchOption.TopDirectoryOnly))
@@ -1372,6 +1393,7 @@ namespace ILTransform
             }
         }
 
+        // Side effect: Adds a TestProject to _projects
         private void ScanProject(string absolutePath, string relativePath)
         {
             string projectName = Path.GetFileNameWithoutExtension(relativePath);
@@ -1422,7 +1444,6 @@ namespace ILTransform
                                                 {
                                                     compileFilesIncludeProjectName = true;
                                                 }
-                                                allProperties[compileFile] = compileFile;
                                                 string file = compileFile
                                                     .Replace("$(MSBuildProjectName)", projectName)
                                                     .Replace("$(MSBuildThisFileName)", projectName)
@@ -1868,6 +1889,7 @@ namespace ILTransform
             }
         }
 
+        // Side effects: Adds to _classNameMap, adds to _namespaceNameMap, sets DeduplicatedNamespaceName
         private void PopulateClassNameMap()
         {
             HashSet<string> ilNamespaceClasses = new HashSet<string>();
