@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "cs-main": {
-      "commandName": "Project",
-      "commandLineArgs": "-v d:\\r\\runtime2\\src\\tests\\tracing\\eventpipe\\config\\name_config_with_pid.cs"
-    }
-  }
-}

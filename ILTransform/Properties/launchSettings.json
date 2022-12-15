@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "ILTransform": {
-      "commandName": "Project",
-      "commandLineArgs": "-ilfile d:\\r\\runtime2\\src\\tests\\JIT\\Regression"
-    }
-  }
-}

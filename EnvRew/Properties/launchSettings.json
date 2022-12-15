@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "EnvRew": {
-      "commandName": "Project",
-      "commandLineArgs": "-j d:\\r\\runtime\\src\\tests"
-    }
-  }
-}

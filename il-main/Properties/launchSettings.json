@@ -1,8 +1,0 @@
-{
-  "profiles": {
-    "il-main": {
-      "commandName": "Project",
-      "commandLineArgs": "-j d:\\r\\runtime\\src\\tests"
-    }
-  }
-}
