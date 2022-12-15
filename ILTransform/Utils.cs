@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text;
@@ -53,6 +55,68 @@ namespace ILTransform
                 Console.WriteLine($"Case-sensitive move from {sourceFileName} to {destFileName}");
             }
             File.Move(sourceFileName, destFileName, overwrite);
+        }
+
+        internal static bool HasNewLineAtEnd(string filename)
+        {
+            using (FileStream fs = File.Open(filename, FileMode.Open))
+            {
+                fs.Seek(-1, SeekOrigin.End);
+                int b = fs.ReadByte();
+                return b == '\n';
+            }
+        }
+
+        internal enum NewLineAtEndSetting
+        {
+            No,
+            Preserve,
+            Yes
+        }
+
+        internal static void WriteAllLines(string filename, List<string> lines, NewLineAtEndSetting newLineAtEndSetting = NewLineAtEndSetting.Yes)
+        {
+            bool appendNewLineAtEnd;
+            switch (newLineAtEndSetting)
+            {
+                case NewLineAtEndSetting.No:
+                    appendNewLineAtEnd = false;
+                    break;
+
+                case NewLineAtEndSetting.Preserve:
+                    appendNewLineAtEnd = HasNewLineAtEnd(filename);
+                    break;
+
+                case NewLineAtEndSetting.Yes:
+                    appendNewLineAtEnd = true;
+                    break;
+
+                default:
+                    throw new ArgumentException(string.Format("newLineAtEnd = {0}", newLineAtEndSetting));
+            }
+
+            using (var writer = new StreamWriter(filename))
+            {
+                bool first = true;
+                foreach (string line in lines)
+                {
+                    if (first)
+                    {
+                        first = false;
+                    }
+                    else
+                    {
+                        writer.WriteLine();
+                    }
+
+                    writer.Write(line);
+                }
+
+                if (appendNewLineAtEnd)
+                {
+                    writer.WriteLine();
+                }
+            }
         }
     }
 }

@@ -97,7 +97,7 @@ namespace ILTransform
 
             if (!string.IsNullOrEmpty(_testProject.MainMethodName))
             {
-                int lineIndex = _testProject.LastMainMethodLine;
+                int lineIndex = _testProject.LastMainMethodDefLine;
                 if (lineIndex >= 0)
                 {
                     if (_settings.AddILFactAttributes)
@@ -129,26 +129,26 @@ namespace ILTransform
                         }
                     }
 
-                    if (_settings.MakePublic && (_testProject.FirstMainMethodLine != -1))
+                    if (_settings.MakePublic && (_testProject.FirstMainMethodDefLine != -1))
                     {
                         if (isILTest)
                         {
-                            string line = lines[_testProject.FirstMainMethodLine];
+                            string line = lines[_testProject.FirstMainMethodDefLine];
                             if (!line.Contains(".method"))
                             {
                                 Console.WriteLine("Internal error re-finding .method in {0}", source);
                             }
                             if (TestProject.MakePublic(isILTest: isILTest, ref line, force: true))
                             {
-                                lines[_testProject.FirstMainMethodLine] = line;
+                                lines[_testProject.FirstMainMethodDefLine] = line;
                                 rewritten = true;
                             }
                         }
                         else
                         {
-                            string line = lines[_testProject.FirstMainMethodLine];
+                            string line = lines[_testProject.FirstMainMethodDefLine];
                             TestProject.MakePublic(isILTest: isILTest, ref line, force: true);
-                            lines[_testProject.FirstMainMethodLine] = line;
+                            lines[_testProject.FirstMainMethodDefLine] = line;
                             rewritten = true;
                         }
                     }
@@ -226,8 +226,22 @@ namespace ILTransform
                     if (isILTest)
                     {
                         string classLine = $".class public auto ansi Test_{Path.GetFileNameWithoutExtension(source)} extends [mscorlib] System.Object {{";
-                        lines.Insert(_testProject.FirstMainMethodLine, classLine);
-                        lines.Add("}");
+                        lines.Insert(_testProject.FirstMainMethodDefLine, classLine);
+
+                        // There's a significant problem with inserted lines throwing off the precomputed lines.
+                        // The + 1 is for the line we just inserted, but this is a hack.
+                        int lastMainMethodBodyLine = _testProject.LastMainMethodBodyLine + 1;
+                        int lastMainMethodBodyColumn = _testProject.LastMainMethodBodyColumn;
+                        string line = lines[lastMainMethodBodyLine];
+                        if (lastMainMethodBodyColumn == line.Length)
+                        {
+                            lines.Insert(lastMainMethodBodyLine + 1, "}");
+                        }
+                        else
+                        {
+                            lines[lastMainMethodBodyLine] =
+                                string.Concat(line.AsSpan(0, lastMainMethodBodyColumn), "}", line.AsSpan(lastMainMethodBodyColumn));
+                        }
                         rewritten = true;
                     }
                 }
@@ -493,7 +507,7 @@ namespace ILTransform
 
             if (rewritten)
             {
-                File.WriteAllLines(source, lines);
+                Utils.WriteAllLines(source, lines, Utils.NewLineAtEndSetting.Preserve);
             }
         }
 
@@ -589,7 +603,7 @@ namespace ILTransform
 
             if (rewritten)
             {
-                File.WriteAllLines(path, lines);
+                Utils.WriteAllLines(path, lines, Utils.NewLineAtEndSetting.Preserve);
             }
         }
 

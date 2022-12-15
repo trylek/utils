@@ -2,9 +2,11 @@
 // The .NET Foundation licenses this file to you under the MIT license.
 
 using System;
+using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Metadata;
 using System.Text;
@@ -68,9 +70,11 @@ namespace ILTransform
         public string TestClassSourceFile = "";
         public int TestClassLine = -1;
         public string MainMethodName = "";
-        public int FirstMainMethodLine = -1;
+        public int FirstMainMethodDefLine = -1;
         public int MainTokenMethodLine = -1;
-        public int LastMainMethodLine = -1;
+        public int LastMainMethodDefLine = -1;
+        public int LastMainMethodBodyLine = -1;
+        public int LastMainMethodBodyColumn = -1;
         public int LastHeaderCommentLine = -1; // will include one blank after comments if it exists
         public int LastUsingLine = -1;
         public int NamespaceLine = -1;
@@ -100,9 +104,11 @@ namespace ILTransform
         public string TestClassSourceFile => NewTestClassSourceFile ?? SourceInfo.TestClassSourceFile;
         public int TestClassLine => SourceInfo.TestClassLine;
         public string MainMethodName => SourceInfo.MainMethodName;
-        public int FirstMainMethodLine => SourceInfo.FirstMainMethodLine;
+        public int FirstMainMethodDefLine => SourceInfo.FirstMainMethodDefLine;
         public int MainTokenMethodLine => SourceInfo.MainTokenMethodLine;
-        public int LastMainMethodLine => SourceInfo.LastMainMethodLine;
+        public int LastMainMethodDefLine => SourceInfo.LastMainMethodDefLine;
+        public int LastMainMethodBodyLine => SourceInfo.LastMainMethodBodyLine;
+        public int LastMainMethodBodyColumn => SourceInfo.LastMainMethodBodyColumn;
         public int LastHeaderCommentLine => SourceInfo.LastHeaderCommentLine;
         public int LastUsingLine => SourceInfo.LastUsingLine;
         public int NamespaceLine => SourceInfo.NamespaceLine;
@@ -1595,9 +1601,9 @@ namespace ILTransform
                     int mainLineIndent = GetIndent(line);
 
                     // First and Last aren't accurate here
-                    sourceInfo.FirstMainMethodLine = mainLine;
+                    sourceInfo.FirstMainMethodDefLine = mainLine;
                     sourceInfo.MainTokenMethodLine = mainLine;
-                    sourceInfo.LastMainMethodLine = mainLine;
+                    sourceInfo.LastMainMethodDefLine = mainLine;
 
                     isMainFile = true;
                     sourceInfo.TestClassSourceFile = path;
@@ -1645,6 +1651,13 @@ namespace ILTransform
                                             {
                                                 basePos++;
                                             }
+
+                                            // For a generic (see code below for parsing <TArgs>), only store the base name.
+                                            if (basePos > baseIdentBegin)
+                                            {
+                                                sourceInfo.TestClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
+                                            }
+
                                             if (basePos < line.Length && line[basePos] == '<')
                                             {
                                                 int genericNesting = 1;
@@ -1664,10 +1677,6 @@ namespace ILTransform
                                                         }
                                                     }
                                                 }
-                                            }
-                                            if (basePos > baseIdentBegin)
-                                            {
-                                                sourceInfo.TestClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
                                             }
                                         }
                                     }
@@ -1778,7 +1787,7 @@ namespace ILTransform
             }
 
             // IL projects don't actually need the Fact attribute providing they have a Main method
-            sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodLine >= 0);
+            sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodDefLine >= 0);
         }
 
         private static void AnalyzeILSourceForEntryPoint(string path, List<string> lines, ref SourceInfo sourceInfo)
@@ -1805,30 +1814,32 @@ namespace ILTransform
             string line = lines[lineIndex];
             int column = 0;
 
+            Regex skipRegex = new Regex(@"^\s*(?://.*)?$");
             Regex[] mainRegexes =
             {
                 new Regex(@"\.method(?:\s+(?:/\*06000002\*/|public|private|privatescope|assembly|hidebysig))*\s+static"),
                 new Regex(@"\s+(?:int32|unsigned\s+int32|void)(?:\s+modopt\(\[mscorlib\]System\.Runtime\.CompilerServices\.CallConvCdecl\))?"),
                 new Regex(@"\s+(?<main>[^\s(]+)\s*\("),
                 new Regex(@"\s*(?:(?<type>class\s+(?:\[(?:mscorlib|'mscorlib')\])?System\.String|string)\s*\[\s*\](?:\s*(?<arg>[0-9a-zA-z_]+))?|(?<arg>[0-9a-zA-z_]+))?"),
-                new Regex(@"\s*\)"),
+                new Regex(@"\s*\)(?:\s*c?il)?(?:\s*managed)?(?:\s*noinlining)?(?:\s*forwardref)?"),
+                new Regex(@"\s*{"),
             };
             const int mainStartRegexIndex = 0;
             const int mainNameRegexIndex = 2;
             const int mainEndRegexIndex = 4;
+            const int mainBodyStartRegexIndex = 5;
             List<int> mainMatchLineNumbers = new List<int>();
             List<Match> mainMatches = new List<Match>();
 
             for (int regexIndex = 0; regexIndex < mainRegexes.Length; ++regexIndex)
             {
+                while (skipRegex.Match(line.Substring(column)).Success)
+                {
+                    line = lines[++lineIndex];
+                    column = 0;
+                }
                 Regex mainRegex = mainRegexes[regexIndex];
                 Match mainMatch = mainRegex.Match(line, column);
-                if (line.Substring(column).All(c => char.IsWhiteSpace(c)))
-                {
-                    lineIndex++;
-                    line = lines[lineIndex];
-                    mainMatch = mainRegex.Match(line);
-                }
                 if (!mainMatch.Success)
                 {
                     Console.WriteLine("Couldn't match RE #{0} for entrypoint on line {1} in {2}", regexIndex, lineIndex, path);
@@ -1846,23 +1857,28 @@ namespace ILTransform
             }
 
             sourceInfo.MainMethodName = mainName;
-            sourceInfo.FirstMainMethodLine = mainMatchLineNumbers[mainStartRegexIndex];
+            sourceInfo.FirstMainMethodDefLine = mainMatchLineNumbers[mainStartRegexIndex];
             sourceInfo.MainTokenMethodLine = mainMatchLineNumbers[mainNameRegexIndex];
-            sourceInfo.LastMainMethodLine = mainMatchLineNumbers[mainEndRegexIndex];
+            sourceInfo.LastMainMethodDefLine = mainMatchLineNumbers[mainEndRegexIndex];
             if (lines.FindIndex(
-                sourceInfo.LastMainMethodLine,
-                Math.Min(10, lines.Count - sourceInfo.LastMainMethodLine),
+                sourceInfo.LastMainMethodDefLine,
+                Math.Min(10, lines.Count - sourceInfo.LastMainMethodDefLine),
                 line => line.Contains("FactAttribute")) >= 0)
             {
                 sourceInfo.HasFactAttribute = true;
             }
+
+            int mainBodyStartLine = mainMatchLineNumbers[mainBodyStartRegexIndex];
+            int mainBodyStartColumn = mainMatches[mainBodyStartRegexIndex].Index + mainMatches[mainBodyStartRegexIndex].Length;
+            (sourceInfo.LastMainMethodBodyLine, sourceInfo.LastMainMethodBodyColumn) =
+                FindCloseBrace(lines, mainBodyStartLine, mainBodyStartColumn);
 
             // Old code searched for TestEntryPoint( to identify an entry point,
             // but the above .entrypoint/.method/regex search is enough to know that we have one.
 
             sourceInfo.TestClassSourceFile = path;
 
-            lineIndex = sourceInfo.FirstMainMethodLine;
+            lineIndex = sourceInfo.FirstMainMethodDefLine;
             while (--lineIndex >= 0 && sourceInfo.TestClassName == "")
             {
                 if (TestProject.GetILClassName(lines[lineIndex], out string? className))
@@ -1885,6 +1901,97 @@ namespace ILTransform
                         }
                      }
                      break;
+                }
+            }
+        }
+
+        private static (int, int) FindCloseBrace(List<string> lines, int startLineNumber, int startColumn)
+        {
+            int openBraces = 1;
+            int lineNumber = startLineNumber;
+            int columnNumber = startColumn;
+            bool inQuote = false;
+            bool inCommentBlock = false;
+
+            string line = lines[lineNumber];
+
+            for (;;)
+            {
+                while (columnNumber == line.Length)
+                {
+                    if (++lineNumber == lines.Count)
+                    {
+                        Console.WriteLine("Ran out of lines searching for }");
+                        return (lineNumber - 1, lines[lineNumber - 1].Length);
+                    }
+
+                    line = lines[lineNumber];
+                    columnNumber = 0;
+                }
+
+                if (inCommentBlock)
+                {
+                    if (line.AsSpan(columnNumber).StartsWith("*/"))
+                    {
+                        inCommentBlock = false;
+                        columnNumber += 2;
+                    }
+                    else columnNumber++;
+                }
+                else if (inQuote)
+                {
+                    if (line[columnNumber] == '"')
+                    {
+                        inQuote = false;
+                        columnNumber++;
+                    }
+                    else if (line.AsSpan(columnNumber).StartsWith("\\\""))
+                    {
+                        columnNumber += 2;
+                    }
+                    else columnNumber++;
+                }
+                else if (line[columnNumber] == '}')
+                {
+                    if (--openBraces == 0)
+                    {
+                        columnNumber++;
+                        while ((columnNumber < line.Length) && char.IsWhiteSpace(line[columnNumber]))
+                        {
+                            columnNumber++;
+                        }
+                        if ((columnNumber != line.Length)
+                            && line.AsSpan(columnNumber).StartsWith("//"))
+                        {
+                            columnNumber = line.Length;
+                        }
+                        return (lineNumber, columnNumber);
+                    }
+
+                    columnNumber++;
+                }
+                else if (line.AsSpan(columnNumber).StartsWith("//"))
+                {
+                    columnNumber = line.Length;
+                }
+                else if (line.AsSpan(columnNumber).StartsWith("/*"))
+                {
+                    inCommentBlock = true;
+                    columnNumber += 2;
+                }
+                else if (line[columnNumber] == '"')
+                {
+                    inQuote = true;
+                    columnNumber++;
+                }
+                else if (line[columnNumber] == '{')
+                {
+                    openBraces++;
+                    columnNumber++;
+                }
+                else
+                {
+                    columnNumber++;
                 }
             }
         }
