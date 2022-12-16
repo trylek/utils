@@ -18,6 +18,22 @@ namespace ILTransform
             return index + value.Length;
         }
 
+        internal static void AddToNestedMap<TKey1, TKey2, TValue>(
+            Dictionary<TKey1, Dictionary<TKey2, TValue>> nestedMap,
+            TKey1 key1,
+            TKey2 key2,
+            TValue value)
+            where TKey1 : notnull
+            where TKey2 : notnull
+        {
+            if (!nestedMap.TryGetValue(key1, out Dictionary<TKey2, TValue>? innerMap))
+            {
+                innerMap = new Dictionary<TKey2, TValue>();
+                nestedMap.Add(key1, innerMap);
+            }
+            innerMap.Add(key2, value);
+        }
+
         internal static void AddToMultiMap<TKey>(
             Dictionary<TKey, List<TestProject>> multiMap,
             TKey key,
@@ -29,21 +45,23 @@ namespace ILTransform
                 projectList = new List<TestProject>();
                 multiMap.Add(key, projectList);
             }
-            projectList!.Add(project);
+            projectList.Add(project);
         }
 
-        internal static void AddToNestedMultiMap<TKey>(
-            Dictionary<TKey, Dictionary<DebugOptimize, List<TestProject>>> nestedMultiMap,
-            TKey key,
+        internal static void AddToNestedMultiMap<TKey1, TKey2>(
+            Dictionary<TKey1, Dictionary<TKey2, List<TestProject>>> nestedMultiMap,
+            TKey1 key1,
+            TKey2 key2,
             TestProject project)
-            where TKey: notnull
+            where TKey1 : notnull
+            where TKey2 : notnull
         {
-            if (!nestedMultiMap.TryGetValue(key, out Dictionary<DebugOptimize, List<TestProject>>? multiMap))
+            if (!nestedMultiMap.TryGetValue(key1, out Dictionary<TKey2, List<TestProject>>? multiMap))
             {
-                multiMap = new Dictionary<DebugOptimize, List<TestProject>>();
-                nestedMultiMap.Add(key, multiMap);
+                multiMap = new Dictionary<TKey2, List<TestProject>>();
+                nestedMultiMap.Add(key1, multiMap);
             }
-            Utils.AddToMultiMap(multiMap, project.DebugOptimize, project);
+            Utils.AddToMultiMap(multiMap, key2, project);
         }
 
         internal static void AddToMultiMap<TKey>(
@@ -57,7 +75,7 @@ namespace ILTransform
                 projectSet = new HashSet<string>();
                 multiMap.Add(key, projectSet);
             }
-            projectSet!.Add(value);
+            projectSet.Add(value);
         }
 
         internal static void FileMove(string sourceFileName, string destFileName, bool overwrite = false)

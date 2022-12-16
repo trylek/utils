@@ -119,7 +119,6 @@ namespace ILTransform
         public readonly bool IsILProject;
 
         public string? TestProjectAlias;
-        public string? DeduplicatedClassName;
         public string? DeduplicatedNamespaceName;
         public bool AddedFactAttribute = false;
         public string? NewAbsolutePath;
@@ -505,7 +504,7 @@ namespace ILTransform
     {
         private readonly List<TestProject> _projects;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
-        private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _namespaceNameMap;
+        private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _classNameDbgOptMap;
         private readonly HashSet<string> _rewrittenFiles;
         private readonly Dictionary<string, string> _movedFiles;
 
@@ -513,7 +512,7 @@ namespace ILTransform
         {
             _projects = new List<TestProject>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
-            _namespaceNameMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
+            _classNameDbgOptMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _rewrittenFiles = new HashSet<string>();
             _movedFiles = new Dictionary<string, string>();
         }
@@ -740,7 +739,7 @@ namespace ILTransform
             {
                 foreach (string source in project.CompileFiles)
                 {
-                    Utils.AddToNestedMultiMap(potentialDuplicateMap, source, project);
+                    Utils.AddToNestedMultiMap(potentialDuplicateMap, source, project.DebugOptimize, project);
                 }
             }
 
@@ -944,7 +943,6 @@ namespace ILTransform
         public void RewriteAllTests(Settings settings)
         {
             Stopwatch sw = Stopwatch.StartNew();
-            HashSet<string> classNameDuplicates = new HashSet<string>(_classNameMap.Where(kvp => kvp.Value.Count > 1).Select(kvp => kvp.Key));
 
             int index = 0;
             foreach (TestProject project in _projects)
@@ -955,7 +953,6 @@ namespace ILTransform
                 }
                 new ILRewriter(
                     project,
-                    classNameDuplicates,
                     settings,
                     _rewrittenFiles).Rewrite();
                 index++;
@@ -2005,6 +2002,7 @@ namespace ILTransform
         {
             HashSet<string> ilNamespaceClasses = new HashSet<string>();
             Dictionary<string, HashSet<string>> compileFileToFolderNameMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, Dictionary<string, List<TestProject>>> classNameRootProjectNameMap = new Dictionary<string, Dictionary<string, List<TestProject>>>();
 
             foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
             {
@@ -2012,9 +2010,9 @@ namespace ILTransform
                 DebugPrintIfAccum(project);
 
                 Utils.AddToMultiMap(_classNameMap, project.TestClassName, project);
-
-                string namespaceClass = project.TestClassNamespace + "#" + project.TestClassName;
-                Utils.AddToNestedMultiMap(_namespaceNameMap, namespaceClass, project);
+                Utils.AddToNestedMultiMap(_classNameDbgOptMap, project.TestClassName, project.DebugOptimize, project);
+                project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
+                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.TestClassName, rootName, project);
 
                 foreach (string file in project.CompileFiles)
                 {
@@ -2026,7 +2024,7 @@ namespace ILTransform
 
             HashSet<TestProject> ilProjects = new HashSet<TestProject>(_projects.Where(prj => prj.IsILProject));
 
-            foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _namespaceNameMap.Values.Where(
+            foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _classNameDbgOptMap.Values.Where(
                 dict => dict.Values.Any(l => l.Count > 1)
                 ))
             {

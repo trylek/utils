@@ -48,18 +48,15 @@ namespace ILTransform
         }
 
         private readonly TestProject _testProject;
-        private readonly HashSet<string> _classNameDuplicates;
         private readonly Settings _settings;
         private readonly HashSet<string> _rewrittenFiles;
 
         public ILRewriter(
             TestProject testProject,
-            HashSet<string> classNameDuplicates,
             Settings settings,
             HashSet<string> rewrittenFiles)
         {
             _testProject = testProject;
-            _classNameDuplicates = classNameDuplicates;
             _settings = settings;
             _rewrittenFiles = rewrittenFiles;
         }
@@ -494,15 +491,6 @@ namespace ILTransform
                         }
                     }
                 }
-            }
-
-            if (_settings.DeduplicateClassNames && _testProject.DeduplicatedClassName != null)
-            {
-                for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
-                {
-                    lines[lineIndex] = ReplaceIdent(lines[lineIndex], _testProject.TestClassName, _testProject.DeduplicatedClassName);
-                }
-                rewritten = true;
             }
 
             if (rewritten)
