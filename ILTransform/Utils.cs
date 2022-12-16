@@ -46,6 +46,20 @@ namespace ILTransform
             Utils.AddToMultiMap(multiMap, project.DebugOptimize, project);
         }
 
+        internal static void AddToMultiMap<TKey>(
+            Dictionary<TKey, HashSet<string>> multiMap,
+            TKey key,
+            string value)
+            where TKey : notnull
+        {
+            if (!multiMap.TryGetValue(key, out HashSet<string>? projectSet))
+            {
+                projectSet = new HashSet<string>();
+                multiMap.Add(key, projectSet);
+            }
+            projectSet!.Add(value);
+        }
+
         internal static void FileMove(string sourceFileName, string destFileName, bool overwrite = false)
         {
             if (sourceFileName == destFileName) return;

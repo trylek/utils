@@ -506,7 +506,6 @@ namespace ILTransform
         private readonly List<TestProject> _projects;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _namespaceNameMap;
-        private readonly HashSet<string> _commonClassNames;
         private readonly HashSet<string> _rewrittenFiles;
         private readonly Dictionary<string, string> _movedFiles;
 
@@ -515,12 +514,9 @@ namespace ILTransform
             _projects = new List<TestProject>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _namespaceNameMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
-            _commonClassNames = new HashSet<string>();
             _rewrittenFiles = new HashSet<string>();
             _movedFiles = new Dictionary<string, string>();
         }
-
-        public void AddCommonClassName(string className) => _commonClassNames.Add(className);
 
         public void ScanTrees(IReadOnlyList<string> rootPaths)
         {
@@ -1049,6 +1045,14 @@ namespace ILTransform
         private static string[] s_wrapperGroups = new string[] { "_do", "_ro", "_d", "_r", "" };
 
         // Side effects: Moves project files, sets NewAbsolutePath
+        //
+        // Note: This logic doesn't guarantee that two projects with the same root end up staying that way,
+        // though this requires inconsistency in collisions.  For example:
+        // [dir1\foo_d.csproj, dir1\foo_r.csproj,      dir1\foo_d.ilproj,    dir2\foo_r.csproj]
+        // could end up as
+        // [dir1\foo_d.csproj, dir1\foo_dir1_r,csproj, dir1\foo_il_d.ilproj, dir2\foo_dir2_r.csproj]
+        // This could cause projects with different root names to share a source file.  A subsequent
+        // run on ILTransform would likely detect this.
         public void DeduplicateProjectNames()
         {
             foreach (string wrapperGroup in s_wrapperGroups)
@@ -2004,17 +2008,10 @@ namespace ILTransform
 
             foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
             {
-                if (project.RelativePath.Contains("hfa_params"))
-                {
-                    Console.WriteLine("Project: {0}", project.AbsolutePath);
-                }
+                DebugPrintIfPathHfaParams(project);
+                DebugPrintIfAccum(project);
 
                 Utils.AddToMultiMap(_classNameMap, project.TestClassName, project);
-
-                if (project.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum"))
-                {
-                    Console.WriteLine("Project: {0}", project.AbsolutePath);
-                }
 
                 string namespaceClass = project.TestClassNamespace + "#" + project.TestClassName;
                 Utils.AddToNestedMultiMap(_namespaceNameMap, namespaceClass, project);
@@ -2023,50 +2020,17 @@ namespace ILTransform
                 {
                     string fileName = Path.GetFileName(file);
                     string folderName = Path.GetFileName(Path.GetDirectoryName(file)!);
-                    if (!compileFileToFolderNameMap.TryGetValue(fileName, out HashSet<string>? folders))
-                    {
-                        folders = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        compileFileToFolderNameMap.Add(fileName, folders);
-                    }
-                    folders.Add(folderName);
+                    Utils.AddToMultiMap(compileFileToFolderNameMap, fileName, folderName);
                 }
             }
-
-            /*
-            foreach (List<TestProject> projectList in _classNameMap.Values.Where(v => v.Count > 1))
-            {
-                var found = new HashSet<DebugOptimize>();
-                bool doDedup = false;
-                foreach (TestProject project in projectList)
-                {
-                    // No longer using "*" for "fake" - instead should check _commonClassNames if trying to use this again
-                    if (project.DebugOptimize.Debug == "*" || !found.Add(project.DebugOptimize))
-                    {
-                       doDedup = true;
-                       break;
-                    }
-                }
-
-                if (doDedup)
-                {
-                    foreach (TestProject project in projectList)
-                    {
-                        project.DeduplicatedClassName = TestProject.SanitizeIdentifier(project.TestClassName + "_" + Path.GetFileNameWithoutExtension(project.TestClassSourceFile));
-                    }
-                }
-            }
-            */
 
             HashSet<TestProject> ilProjects = new HashSet<TestProject>(_projects.Where(prj => prj.IsILProject));
 
             foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _namespaceNameMap.Values.Where(
-                dict => dict.Values.Any(l => l.Count > 1 || l.Any(p => _commonClassNames.Contains(p.TestClassName)))
+                dict => dict.Values.Any(l => l.Count > 1)
                 ))
             {
-                if (debugOptProjectMap.Values.Any(prjList => prjList.Any(prj => prj.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum"))))
-                {
-                    Console.WriteLine("accum!");
-                }
+                DebugPrintIfAccum(debugOptProjectMap);
 
                 bool haveCsAndIlVersion =
                     debugOptProjectMap.Values.Any(l => l.Any(prj => prj.IsILProject)) &&
@@ -2078,15 +2042,8 @@ namespace ILTransform
 
                 foreach (TestProject project in debugOptProjectMap.Values.SelectMany(v => v))
                 {
-                    if (project.RelativePath.Contains("hfa_params"))
-                    {
-                        Console.WriteLine("Project: {0}", project.AbsolutePath);
-                    }
-
-                    if (Path.GetFileName(project.TestClassSourceFile) == "hfa_params.cs")
-                    {
-                        Console.WriteLine("Project: {0}", project.AbsolutePath);
-                    }
+                    DebugPrintIfPathHfaParams(project);
+                    DebugPrintIfSourceHfaParams(project);
 
                     string deduplicatedName = project.TestClassNamespace;
                     if (deduplicatedName == "")
@@ -2104,6 +2061,41 @@ namespace ILTransform
                     }
                     project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(deduplicatedName);
                 }
+            }
+        }
+
+        private static void DebugPrintIfPathHfaParams(TestProject project)
+        {
+            if (project.RelativePath.Contains("hfa_params"))
+            {
+                Console.WriteLine("Project: {0}", project.AbsolutePath);
+            }
+        }
+
+        private static bool ProjectSourceAccum(TestProject project)
+            => project.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum");
+
+        private static void DebugPrintIfAccum(TestProject project)
+        {
+            if (ProjectSourceAccum(project))
+            {
+                Console.WriteLine("Project: {0}", project.AbsolutePath);
+            }
+        }
+
+        private static void DebugPrintIfAccum(Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap)
+        {
+            if (debugOptProjectMap.Values.Any(prjList => prjList.Any(ProjectSourceAccum)))
+            {
+                Console.WriteLine("accum!");
+            }
+        }
+
+        private static void DebugPrintIfSourceHfaParams(TestProject project)
+        {
+            if (Path.GetFileName(project.TestClassSourceFile) == "hfa_params.cs")
+            {
+                Console.WriteLine("Project: {0}", project.AbsolutePath);
             }
         }
     }

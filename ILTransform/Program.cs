@@ -127,7 +127,6 @@ namespace ILTransform
                 }
 
                 TestProjectStore testStore = new TestProjectStore();
-                testStore.AddCommonClassName("My");
                 testStore.ScanTrees(testRoots);
                 testStore.GenerateExternAliases();
 
