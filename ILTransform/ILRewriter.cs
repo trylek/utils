@@ -607,7 +607,8 @@ namespace ILTransform
             _Illegal,
             WhiteSpace,
             Comment,
-            Quoted,
+            DoubleQuoted,
+            SingleQuoted,
             Identifier,
             Other
         }
@@ -615,19 +616,19 @@ namespace ILTransform
         private bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
             && kinds[0] == TokenKind.Other && tokens[0] == "."
-            && kinds[1] == TokenKind.Identifier && tokens[1] == "namespace"
+            && (kinds[1] == TokenKind.Identifier || kinds[1] == TokenKind.SingleQuoted) && tokens[1] == "namespace"
             && kinds[2] == TokenKind.WhiteSpace;
 
         private bool IsNamespacePrefix(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 2 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "."
-            && kinds[index + 2] == TokenKind.Identifier;
+            && (kinds[index + 2] == TokenKind.Identifier || kinds[index + 2] == TokenKind.SingleQuoted);
 
         private bool IsTypePrefix(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 2 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other
             && ((tokens[index + 1] == "::") || (tokens[index + 1] == "/")) // type::field or type::nestedtype
-            && kinds[index + 2] == TokenKind.Identifier;
+            && (kinds[index + 2] == TokenKind.Identifier || kinds[index + 2] == TokenKind.SingleQuoted);
 
         private static string[] TypeDefTokens = { "public", "auto", "ansi" };
         private bool IsTypeNameDef(List<string> tokens, List<TokenKind> kinds, int index)
@@ -635,7 +636,7 @@ namespace ILTransform
             for (; index >= 2; index -= 2)
             {
                 if (kinds[index - 1] != TokenKind.WhiteSpace) break;
-                if (kinds[index - 2] != TokenKind.Identifier) break;
+                if (kinds[index - 2] != TokenKind.Identifier && kinds[index - 2] != TokenKind.SingleQuoted) break;
                 if (tokens[index - 2] == ".class") return true;
                 if (!TypeDefTokens.Contains(tokens[index - 2])) break;
             }
@@ -644,7 +645,8 @@ namespace ILTransform
 
         private bool IsTypeNameUse(List<string> tokens, List<TokenKind> kinds, int index)
             => (index >= 2)
-            && kinds[index - 2] == TokenKind.Identifier && (tokens[index - 2] == "class" || tokens[index - 2] == "valuetype")
+            && (kinds[index - 2] == TokenKind.Identifier || kinds[index - 2] == TokenKind.SingleQuoted)
+            && (tokens[index - 2] == "class" || tokens[index - 2] == "valuetype")
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
         private bool IsMethodName(List<string> tokens, List<TokenKind> kinds, int index)
@@ -655,7 +657,8 @@ namespace ILTransform
         private bool IsOperatorType(List<string> tokens, List<TokenKind> kinds, int index)
             => !IsNamespacePrefix(tokens, kinds, index)
             && (index >= 2)
-            && kinds[index - 2] == TokenKind.Identifier && TypeOperators.Contains(tokens[index - 2])
+            && (kinds[index - 2] == TokenKind.Identifier || kinds[index - 2] == TokenKind.SingleQuoted)
+            && TypeOperators.Contains(tokens[index - 2])
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
         private bool IsInheritanceType(List<string> tokens, List<TokenKind> kinds, int index)
@@ -711,16 +714,17 @@ namespace ILTransform
                 char c = source[next];
                 if (c == '\"')
                 {
-                    while (++next < source.Length && source[next] != '\"')
-                    {
-                        // nothing
-                    }
+                    next = source.IndexOf('"', next + 1);
                     // next is " or end of line
-                    if (next < source.Length)
-                    {
-                        next++;
-                    }
-                    kind = TokenKind.Quoted;
+                    next = (next == -1) ? source.Length : next + 1;
+                    kind = TokenKind.DoubleQuoted;
+                }
+                else if (c == '\'')
+                {
+                    next = source.IndexOf('\'', next + 1);
+                    // next is " or end of line
+                    next = (next == -1) ? source.Length : next + 1;
+                    kind = TokenKind.SingleQuoted;
                 }
                 else if (c == '/' && next + 1 < source.Length && source[next + 1] == '/')
                 {
@@ -740,7 +744,7 @@ namespace ILTransform
                 {
                     var special = SpecialTokens.FirstOrDefault(
                         candidate => next + candidate.Item1.Length <= source.Length
-                        && MemoryExtensions.Equals(source.AsSpan(next, candidate.Item1.Length), candidate.Item1.AsSpan(0), StringComparison.Ordinal));
+                        && MemoryExtensions.Equals(source.AsSpan(next, candidate.Item1.Length), candidate.Item1.AsSpan(), StringComparison.Ordinal));
                     if (special.Item1 != null)
                     {
                         next += special.Item1.Length;
@@ -752,7 +756,10 @@ namespace ILTransform
                 {
                     if (!TestProject.IsIdentifier(c))
                     {
-                        while (++next < source.Length && !TestProject.IsIdentifier(source[next]) && !char.IsWhiteSpace(source[next]))
+                        while (++next < source.Length
+                            && !TestProject.IsIdentifier(source[next])
+                            && (source[next] != '\'')
+                            && !char.IsWhiteSpace(source[next]))
                         {
                             // nothing
                         }
@@ -776,60 +783,62 @@ namespace ILTransform
             for (int i = 0; i < tokens.Count; ++i)
             {
                 string token = tokens[i];
-                if (kinds[i] == TokenKind.Identifier)
+                if (((kinds[i] == TokenKind.Identifier)
+                    && (token == searchIdent))
+                    || ((kinds[i] == TokenKind.SingleQuoted)
+                        && MemoryExtensions.Equals(token.AsSpan(1, token.Length - 2), searchIdent.AsSpan(), StringComparison.Ordinal)))
                 {
-                    if (token == searchIdent)
+                    bool replace = true;
+                    if (searchKind == IdentKind.Namespace)
                     {
-                        bool replace = true;
-                        if (searchKind == IdentKind.Namespace)
+                        if (IsNamespaceDeclName(tokens, kinds, i)
+                            || IsNamespacePrefix(tokens, kinds, i))
                         {
-                            if (IsNamespaceDeclName(tokens, kinds, i)
-                                || IsNamespacePrefix(tokens, kinds, i))
-                            {
-                                // good
-                            }
-                            else if (IsTypeNameDef(tokens, kinds, i))
-                            {
-                                replace = false;
-                            }
-                            else
-                            {
-                                Console.WriteLine("{0}: Checking for namespace: couldn't determine token kind of token #{1}={2} in",
-                                    _testProject.AbsolutePath, i, token);
-                                Console.WriteLine(source);
-                                replace = false;
-                            }
+                            // good
                         }
-                        else if (searchKind == IdentKind.TypeUse)
+                        else if (IsTypeNameDef(tokens, kinds, i))
                         {
-                            if (IsTypePrefix(tokens, kinds, i)
-                                || IsTypeNameUse(tokens, kinds, i)
-                                || IsInheritanceType(tokens, kinds, i)
-                                || IsOperatorType(tokens, kinds, i))
-                            {
-                                // good
-                            }
-                            else if (IsNamespacePrefix(tokens, kinds, i)
-                                || IsMethodName(tokens, kinds, i)
-                                || IsTypeNameDef(tokens, kinds, i)
-                                || IsVariableName(tokens, kinds, i))
-                            {
-                                replace = false;
-                            }
-                            else
-                            {
-                                Console.WriteLine("{0}: Checking for type: couldn't determine token kind of token #{1}={2} in",
-                                    _testProject.AbsolutePath, i, token);
-                                Console.WriteLine(source);
-                                replace = false;
-                            }
+                            replace = false;
                         }
+                        else
+                        {
+                            Console.WriteLine("{0}: Checking for namespace: couldn't determine token kind of token #{1}={2} in",
+                                _testProject.AbsolutePath, i, token);
+                            Console.WriteLine(source);
+                            replace = false;
+                        }
+                    }
+                    else if (searchKind == IdentKind.TypeUse)
+                    {
+                        if (IsTypePrefix(tokens, kinds, i)
+                            || IsTypeNameUse(tokens, kinds, i)
+                            || IsInheritanceType(tokens, kinds, i)
+                            || IsOperatorType(tokens, kinds, i))
+                        {
+                            // good
+                        }
+                        else if (IsNamespacePrefix(tokens, kinds, i)
+                            || IsMethodName(tokens, kinds, i)
+                            || IsTypeNameDef(tokens, kinds, i)
+                            || IsVariableName(tokens, kinds, i))
+                        {
+                            replace = false;
+                        }
+                        else
+                        {
+                            Console.WriteLine("{0}: Checking for type: couldn't determine token kind of token #{1}={2} in",
+                                _testProject.AbsolutePath, i, token);
+                            Console.WriteLine(source);
+                            replace = false;
+                        }
+                    }
 
-                        if (replace)
-                        {
-                            builder.Append(replaceIdent);
-                            continue;
-                        }
+                    if (replace)
+                    {
+                        if (kinds[i] == TokenKind.SingleQuoted) builder.Append('\'');
+                        builder.Append(replaceIdent);
+                        if (kinds[i] == TokenKind.SingleQuoted) builder.Append('\'');
+                        continue;
                     }
                 }
 

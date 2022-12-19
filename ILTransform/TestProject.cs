@@ -6,6 +6,7 @@ using System.Data.Common;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Reflection.Metadata;
@@ -339,7 +340,7 @@ namespace ILTransform
                 if (IsIdentifier(line[scanIndex]))
                 {
                     int identStart = scanIndex;
-                    while (++scanIndex < line.Length && IsIdentifier(line[scanIndex]))
+                    while (++scanIndex < line.Length && (IsIdentifier(line[scanIndex]) || (line[scanIndex] == '.')))
                     {
                     }
                     className = line.Substring(identStart, scanIndex - identStart);
@@ -1080,48 +1081,11 @@ namespace ILTransform
 
                 foreach (List<TestProject> projectList in rootNameToProjectMap.Values.Where(pl => pl.Count > 1))
                 {
-                    // First find closest directory level with different names
-                    int depth = 1;
-                    const int maxDepth = 3;
-                    do
-                    {
-                        HashSet<string> folderCollisions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                        bool foundCollision = false;
-                        foreach (TestProject project in projectList)
-                        {
-                            string projectDir = Path.GetDirectoryName(project.AbsolutePath)!;
-                            string dirKey = "";
-                            for (int i = 0; i < depth; i++)
-                            {
-                                dirKey += "/" + Path.GetFileName(projectDir);
-                                projectDir = Path.GetDirectoryName(projectDir)!;
-                            }
-                            if (!folderCollisions.Add(dirKey))
-                            {
-                                foundCollision = true;
-                                break;
-                            }
-                        }
-                        if (!foundCollision)
-                        {
-                            break;
-                        }
-                    }
-                    while (++depth <= maxDepth);
-
-                    // Check that we found one
-                    if (depth > maxDepth)
-                    {
-                        Console.WriteLine("No collision found for duplicate project names:");
-                        projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
-                        continue;
-                    }
-
                     List<string> projectDirs = projectList.Select(p => Path.GetDirectoryName(p.AbsolutePath)).ToList()!;
                     List<string> extraRootNames;
 
-                    int ilprojIndex;
                     // Simple case: sometest.csproj and sometest.ilproj => add _il to the ilproj
+                    int ilprojIndex;
                     if ((projectList.Count == 2)
                         && (Path.GetFileNameWithoutExtension(projectList[0].RelativePath) == Path.GetFileNameWithoutExtension(projectList[1].RelativePath))
                         && (projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".csproj") != -1)
@@ -1134,44 +1098,14 @@ namespace ILTransform
                     }
                     else
                     {
-                        // Extract the 'depth'th directory name
+                        List<string>? differences = Utils.GetNearestDirectoryWithDifferences(projectList.Select(p => p.AbsolutePath).ToList());
+                        if (differences == null)
                         {
-                            IEnumerable<string> extraRootNameEnum = projectDirs;
-                            for (int i = 1; i < depth; ++i)
-                            {
-                                extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetDirectoryName(n)!);
-                            }
-                            extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetFileName(n));
-                            extraRootNames = extraRootNameEnum.ToList()!;
+                            Console.WriteLine("No collision found for duplicate project names:");
+                            projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
+                            continue;
                         }
-
-                        // Reduce ["pre-A-post", pre-B-post"] to ["A", "B"]
-
-                        // Strip matching leading characters - but only add token (by _ or -) boundaries
-                        int minLength = extraRootNames.Select(n => n.Length).Min();
-                        int leadingMatches = 0;
-                        int leadingTokenMatches = 0;
-                        while ((leadingMatches < minLength)
-                            && extraRootNames.All(n => n[leadingMatches] == extraRootNames[0][leadingMatches]))
-                        {
-                            bool isFullToken = new char[] { '_', '-' }.Contains(extraRootNames[0][leadingMatches]);
-                            leadingMatches++;
-                            if (isFullToken) leadingTokenMatches = leadingMatches;
-                        }
-                        extraRootNames = extraRootNames.Select(n => n.Substring(leadingTokenMatches)).ToList();
-
-                        // Strip matching trailing characters
-                        minLength = extraRootNames.Select(n => n.Length).Min();
-                        int trailingMatches = 0;
-                        int trailingTokenMatches = 0;
-                        while ((trailingMatches < minLength)
-                            && extraRootNames.All(n => n[n.Length - trailingMatches - 1] == extraRootNames[0][extraRootNames[0].Length - trailingMatches - 1]))
-                        {
-                            bool isFullToken = new char[] { '_', '-' }.Contains(extraRootNames[0][leadingMatches]);
-                            trailingMatches++;
-                            if (isFullToken) trailingTokenMatches = trailingMatches;
-                        }
-                        extraRootNames = extraRootNames.Select(n => n.Substring(0, n.Length - trailingTokenMatches)).ToList();
+                        extraRootNames = Utils.TrimSharedTokens(differences!);
                     }
 
                     foreach ((TestProject project, string projectDir, string extraRootName)
@@ -2002,17 +1936,22 @@ namespace ILTransform
         {
             HashSet<string> ilNamespaceClasses = new HashSet<string>();
             Dictionary<string, HashSet<string>> compileFileToFolderNameMap = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+            // class name -> project file path (WITHOUT suffixes like _d that reuse source files) -> TestProjects
+            // - A collision occurs if the initial class name lookup yields multiple reduced paths
+            // - Each inner list of projects is an _d, _o, etc., family
             Dictionary<string, Dictionary<string, List<TestProject>>> classNameRootProjectNameMap = new Dictionary<string, Dictionary<string, List<TestProject>>>();
 
             foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
             {
-                DebugPrintIfPathHfaParams(project);
-                DebugPrintIfAccum(project);
-
                 Utils.AddToMultiMap(_classNameMap, project.TestClassName, project);
                 Utils.AddToNestedMultiMap(_classNameDbgOptMap, project.TestClassName, project.DebugOptimize, project);
+
                 project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
-                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.TestClassName, rootName, project);
+                string projectWithoutSuffix = Path.Combine(
+                    Path.GetDirectoryName(project.AbsolutePath)!,
+                    rootName + Path.GetExtension(project.AbsolutePath));
+                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.TestClassName, projectWithoutSuffix, project);
 
                 foreach (string file in project.CompileFiles)
                 {
@@ -2022,78 +1961,77 @@ namespace ILTransform
                 }
             }
 
-            HashSet<TestProject> ilProjects = new HashSet<TestProject>(_projects.Where(prj => prj.IsILProject));
-
-            foreach (Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap in _classNameDbgOptMap.Values.Where(
-                dict => dict.Values.Any(l => l.Count > 1)
-                ))
+            foreach (List<KeyValuePair<string, List<TestProject>>> projectGroups
+                in classNameRootProjectNameMap
+                    .Select(kvp => kvp.Value)
+                    .Where(map => map.Count > 1) // Find conflicts
+                    .Select(d => d.ToList()))
             {
-                DebugPrintIfAccum(debugOptProjectMap);
+                // Each iteration of this loop is for a separate main class name.
+                //
+                // For each iteration, the outer list is a separate family of projects that share the same
+                // "root" (so they are a _d, _o, etc., family with the same directory, root name, and suffix)
+                //
+                // Each outer and inner list is guaranteed to be non-empty.  We'll take a representative from
+                // each group, calculate a unique name for each, and then apply that name to each member of
+                // the group.
+                //
+                // For example, for the following projects, we could choose any of the names to distinguish them:
+                // [
+                //   [dir1\foo_d.csproj, dir1\foo_r.csproj], => ""   or "dir1" or "foo"
+                //   [dir2\bar.ilproj]                       => "il" or "dir2" or "bar"
+                // ]
 
-                bool haveCsAndIlVersion =
-                    debugOptProjectMap.Values.Any(l => l.Any(prj => prj.IsILProject)) &&
-                    debugOptProjectMap.Values.Any(l => l.Any(prj => !prj.IsILProject));
+                // Note: lots of duplication with DeduplicateProjectNames
 
-                bool existsInMultipleFolders = debugOptProjectMap.Values.Any(pl => pl.Any(
-                    p => p.CompileFiles.Any(
-                        cf => compileFileToFolderNameMap.TryGetValue(Path.GetFileName(cf), out HashSet<string>? fl) && fl.Count > 1)));
-
-                foreach (TestProject project in debugOptProjectMap.Values.SelectMany(v => v))
+                string originalNamespace = projectGroups[0].Value[0].TestClassNamespace;
+                if (new string[] { "Test", "JitTest", "Repro", "DefaultNamespace" }.Contains(originalNamespace)
+                    || originalNamespace.Length <= 1)
                 {
-                    DebugPrintIfPathHfaParams(project);
-                    DebugPrintIfSourceHfaParams(project);
-
-                    string deduplicatedName = project.TestClassNamespace;
-                    if (deduplicatedName == "")
-                    {
-                        deduplicatedName = "Test";
-                    }
-                    deduplicatedName += "_" + Path.GetFileNameWithoutExtension(project.TestClassSourceFile);
-                    if (existsInMultipleFolders)
-                    {
-                        deduplicatedName += "_" + Path.GetFileName(Path.GetDirectoryName(project.TestClassSourceFile)!);
-                    }
-                    if (haveCsAndIlVersion)
-                    {
-                        deduplicatedName += (project.IsILProject ? "_il" : "_cs");
-                    }
-                    project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(deduplicatedName);
+                    originalNamespace = "";
                 }
-            }
-        }
+                else
+                {
+                    originalNamespace = originalNamespace + "_";
+                }
 
-        private static void DebugPrintIfPathHfaParams(TestProject project)
-        {
-            if (project.RelativePath.Contains("hfa_params"))
-            {
-                Console.WriteLine("Project: {0}", project.AbsolutePath);
-            }
-        }
+                List<string> newNamespaces;
 
-        private static bool ProjectSourceAccum(TestProject project)
-            => project.CompileFiles.Any(f => Path.GetFileNameWithoutExtension(f) == "accum");
+                List<string>? extensionAttempt = (originalNamespace != null) ? projectGroups.Select(g => g.Value[0].IsILProject ? "il" : "").ToList() : null;
+                List<string> filenameAttempt = projectGroups.Select(g => Path.GetFileNameWithoutExtension(g.Value[0].TestClassSourceFile)).ToList();
+                List<string> projectAttempt = projectGroups.Select(g => Path.GetFileNameWithoutExtension(g.Key)).ToList();
+                List<string>? dirAttempt = Utils.GetNearestDirectoryWithDifferences(projectGroups.Select(g => g.Key).ToList());
+                if (dirAttempt != null)
+                {
+                    dirAttempt = Utils.TrimSharedTokens(dirAttempt);
+                }
+                int extensionSize = (extensionAttempt != null) && extensionAttempt.AllUnique() ? extensionAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+                int filenameSize = filenameAttempt.AllUnique() ? filenameAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+                int projectSize = projectAttempt.AllUnique() ? projectAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+                int dirSize = (dirAttempt != null) && dirAttempt.AllUnique() ? dirAttempt.Select(s => s.Length).Sum() : int.MaxValue;
 
-        private static void DebugPrintIfAccum(TestProject project)
-        {
-            if (ProjectSourceAccum(project))
-            {
-                Console.WriteLine("Project: {0}", project.AbsolutePath);
-            }
-        }
+                int bestSize = Math.Min(extensionSize, Math.Min(filenameSize, Math.Min(projectSize, dirSize)));
+                if (bestSize == int.MaxValue)
+                {
+                    Console.WriteLine("No simple namespace renames for projects with class {0}:", projectGroups[0].Value[0].TestClassName);
+                    projectGroups.ForEach(g => g.Value.ForEach(p => Console.WriteLine("  {0}", p.AbsolutePath)));
+                    continue;
+                }
 
-        private static void DebugPrintIfAccum(Dictionary<DebugOptimize, List<TestProject>> debugOptProjectMap)
-        {
-            if (debugOptProjectMap.Values.Any(prjList => prjList.Any(ProjectSourceAccum)))
-            {
-                Console.WriteLine("accum!");
-            }
-        }
+                List<string> bestAttempt =
+                    (bestSize == extensionSize) ? extensionAttempt!
+                    : (bestSize == filenameSize) ? filenameAttempt
+                    : (bestSize == projectSize) ? projectAttempt
+                    : dirAttempt!;
+                newNamespaces = bestAttempt.Select(str => originalNamespace + str).ToList();
 
-        private static void DebugPrintIfSourceHfaParams(TestProject project)
-        {
-            if (Path.GetFileName(project.TestClassSourceFile) == "hfa_params.cs")
-            {
-                Console.WriteLine("Project: {0}", project.AbsolutePath);
+                foreach ((List<TestProject> projectList, string newNamespace) in projectGroups.Select(kvp => kvp.Value).Zip(newNamespaces))
+                {
+                    foreach (TestProject project in projectList)
+                    {
+                        project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(newNamespace);
+                    }
+                }
             }
         }
     }
