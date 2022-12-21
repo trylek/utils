@@ -1,5 +1,4 @@
 ﻿using System.Text.RegularExpressions;
-using static System.Net.Mime.MediaTypeNames;
 
 Stats stats = new Stats();
 bool printStats = false;
@@ -62,6 +61,11 @@ if (printStats)
         {
             Console.WriteLine("        {0}", kvp.Value[i]);
         }
+        if (kvp.Value.Count > 5)
+        {
+            Console.WriteLine("        ...");
+        }
+
     }
     Console.WriteLine("Number with arg: {0}", stats.HasArg);
     foreach (var kvp in stats.ArgNames)
@@ -71,6 +75,11 @@ if (printStats)
         {
             Console.WriteLine("        {0}", kvp.Value[i]);
         }
+        if (kvp.Value.Count > 5)
+        {
+            Console.WriteLine("        ...");
+        }
+
     }
     Console.WriteLine("Number with arg removed: {0}", stats.ArgRemoved);
     Console.WriteLine("Number with jmp: {0}", stats.FoundJmp);

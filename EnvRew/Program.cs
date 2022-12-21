@@ -1,8 +1,4 @@
-﻿using System;
-using System.IO;
-using System.Reflection.Metadata;
-
-string?[] lines = File.ReadAllLines(args[0]);
+﻿string?[] lines = File.ReadAllLines(args[0]);
 
 Dictionary<string, string> batchVars = new Dictionary<string, string>();
 Dictionary<string, string> bashVars = new Dictionary<string, string>();

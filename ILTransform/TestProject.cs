@@ -1520,7 +1520,7 @@ namespace ILTransform
                 }
 
                 bool foundEntryPoint = false;
-                if (line.Contains("int Main()"))
+                if (line.Contains("int Main()") || lines.Contains("void Main()"))
                 {
                     sourceInfo.MainMethodName = "Main";
                     foundEntryPoint = true;
