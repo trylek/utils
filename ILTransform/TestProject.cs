@@ -65,11 +65,11 @@ namespace ILTransform
     {
         public SourceInfo() { }
 
-        public string TestClassName = "";
-        public List<string> TestClassBases = new List<string>();
-        public string TestClassNamespace = "";
-        public string TestClassSourceFile = "";
-        public int TestClassLine = -1;
+        public string MainClassName = "";
+        public List<string> MainClassBases = new List<string>();
+        public string MainClassNamespace = "";
+        public string MainClassSourceFile = "";
+        public int MainClassLine = -1;
         public string MainMethodName = "";
         public int FirstMainMethodDefLine = -1;
         public int MainTokenMethodLine = -1;
@@ -99,11 +99,11 @@ namespace ILTransform
         public readonly bool CompileFilesIncludeProjectName;
         public readonly string[] ProjectReferences;
         public readonly SourceInfo SourceInfo;
-        public string TestClassName => SourceInfo.TestClassName;
-        public List<string> TestClassBases => SourceInfo.TestClassBases;
-        public string TestClassNamespace => SourceInfo.TestClassNamespace;
-        public string TestClassSourceFile => NewTestClassSourceFile ?? SourceInfo.TestClassSourceFile;
-        public int TestClassLine => SourceInfo.TestClassLine;
+        public string MainClassName => SourceInfo.MainClassName;
+        public List<string> MainClassBases => SourceInfo.MainClassBases;
+        public string MainClassNamespace => SourceInfo.MainClassNamespace;
+        public string MainClassSourceFile => NewTestClassSourceFile ?? SourceInfo.MainClassSourceFile;
+        public int MainClassLine => SourceInfo.MainClassLine;
         public string MainMethodName => SourceInfo.MainMethodName;
         public int FirstMainMethodDefLine => SourceInfo.FirstMainMethodDefLine;
         public int MainTokenMethodLine => SourceInfo.MainTokenMethodLine;
@@ -599,7 +599,7 @@ namespace ILTransform
                 writer.WriteLine(new string('-', title.Length));
                 Dictionary<string, TestCount> folderCounts = new Dictionary<string, TestCount>();
 
-                foreach (TestProject project in _projects.Where(p => p.TestClassName != ""))
+                foreach (TestProject project in _projects.Where(p => p.MainClassName != ""))
                 {
                     string[] folderSplit = project.RelativePath.Split(Path.DirectorySeparatorChar);
                     StringBuilder folderNameBuilder = new StringBuilder();
@@ -899,7 +899,7 @@ namespace ILTransform
                 _projects.Where(p => !p.HasFactAttribute && !p.AddedFactAttribute).Count());
             writer.WriteLine("------------------------------------------");
 
-            _projects.Where(p => p.TestClassName != "" && !p.HasFactAttribute && !p.AddedFactAttribute)
+            _projects.Where(p => p.MainClassName != "" && !p.HasFactAttribute && !p.AddedFactAttribute)
                 .OrderBy(p => p.RelativePath)
                 .Select(p => p.AbsolutePath)
                 .ToList()
@@ -948,7 +948,7 @@ namespace ILTransform
             int index = 0;
             foreach (TestProject project in _projects)
             {
-                if (!string.IsNullOrEmpty(settings.ClassToDeduplicate) && project.TestClassName != settings.ClassToDeduplicate)
+                if (!string.IsNullOrEmpty(settings.ClassToDeduplicate) && project.MainClassName != settings.ClassToDeduplicate)
                 {
                     continue;
                 }
@@ -1135,13 +1135,13 @@ namespace ILTransform
             foreach (TestProject testProject in _projects)
             {
                 if (!testProject.IsILProject) continue;
-                if (string.IsNullOrEmpty(testProject.TestClassSourceFile)) continue;
+                if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) continue;
 
                 string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
 
-                string dir = Path.GetDirectoryName(testProject.TestClassSourceFile)!;
-                string rootName = Path.GetFileNameWithoutExtension(testProject.TestClassSourceFile);
-                string extension = Path.GetExtension(testProject.TestClassSourceFile); // should be .il
+                string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
+                string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
+                string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
 
                 TestProject.GetKeyNameRootNameAndSuffix(
                     testProject.NewAbsolutePath ?? testProject.AbsolutePath,
@@ -1152,17 +1152,17 @@ namespace ILTransform
 
                 if (rootName != projectRootName)
                 {
-                    if (_movedFiles.TryAdd(testProject.TestClassSourceFile, newSourceFile))
+                    if (_movedFiles.TryAdd(testProject.MainClassSourceFile, newSourceFile))
                     {
-                        Utils.FileMove(testProject.TestClassSourceFile, newSourceFile);
+                        Utils.FileMove(testProject.MainClassSourceFile, newSourceFile);
                     }
                     else
                     {
                         // Already moved this file. Check that the targets match.
-                        string prevCopy = _movedFiles[testProject.TestClassSourceFile];
+                        string prevCopy = _movedFiles[testProject.MainClassSourceFile];
                         if (newSourceFile != prevCopy)
                         {
-                            Console.WriteLine($"Conflict in moving {testProject.TestClassSourceFile}");
+                            Console.WriteLine($"Conflict in moving {testProject.MainClassSourceFile}");
                             Console.WriteLine($"to {newSourceFile}");
                             Console.WriteLine($"and {prevCopy}");
                         }
@@ -1220,7 +1220,7 @@ namespace ILTransform
 
                 using (StreamWriter writer = new StreamWriter(wrapperSourcePath))
                 {
-                    foreach (TestProject project in projectGroup.Where(p => p.TestClassName != ""))
+                    foreach (TestProject project in projectGroup.Where(p => p.MainClassName != ""))
                     {
                         writer.WriteLine("extern alias " + project.TestProjectAlias + ";");
                     }
@@ -1243,9 +1243,9 @@ namespace ILTransform
                     foreach (TestProject project in projectGroup)
                     {
                         string testName = project.RelativePath.Replace('\\', '/');
-                        if (project.TestClassName != "")
+                        if (project.MainClassName != "")
                         {
-                            writer.WriteLine("        TryTest(\"" + testName + "\", " + project.TestProjectAlias + "::" + project.TestClassName + ".TestEntrypoint, args);");
+                            writer.WriteLine("        TryTest(\"" + testName + "\", " + project.TestProjectAlias + "::" + project.MainClassName + ".TestEntrypoint, args);");
                         }
                         else
                         {
@@ -1541,7 +1541,7 @@ namespace ILTransform
                     sourceInfo.LastMainMethodDefLine = mainLine;
 
                     isMainFile = true;
-                    sourceInfo.TestClassSourceFile = path;
+                    sourceInfo.MainClassSourceFile = path;
                     while (--mainLine >= 0)
                     {
                         line = lines[mainLine];
@@ -1563,8 +1563,8 @@ namespace ILTransform
                                     {
                                         classNameEnd++;
                                     }
-                                    sourceInfo.TestClassName = line.Substring(classNameStart, classNameEnd - classNameStart);
-                                    sourceInfo.TestClassLine = mainLine;
+                                    sourceInfo.MainClassName = line.Substring(classNameStart, classNameEnd - classNameStart);
+                                    sourceInfo.MainClassLine = mainLine;
 
                                     int basePos = classNameEnd;
                                     while (basePos < line.Length && char.IsWhiteSpace(line[basePos]))
@@ -1590,7 +1590,7 @@ namespace ILTransform
                                             // For a generic (see code below for parsing <TArgs>), only store the base name.
                                             if (basePos > baseIdentBegin)
                                             {
-                                                sourceInfo.TestClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
+                                                sourceInfo.MainClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
                                             }
 
                                             if (basePos < line.Length && line[basePos] == '<')
@@ -1628,7 +1628,7 @@ namespace ILTransform
                                                 namespaceNameEnd++;
                                             }
                                             string namespaceName = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
-                                            sourceInfo.TestClassName = namespaceName + "." + sourceInfo.TestClassName;
+                                            sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                                         }
                                     }
                                 }
@@ -1689,7 +1689,7 @@ namespace ILTransform
                         {
                             namespaceNameEnd++;
                         }
-                        sourceInfo.TestClassNamespace = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
+                        sourceInfo.MainClassNamespace = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
                     }
                     break;
                 }
@@ -1811,15 +1811,15 @@ namespace ILTransform
             // Old code searched for TestEntryPoint( to identify an entry point,
             // but the above .entrypoint/.method/regex search is enough to know that we have one.
 
-            sourceInfo.TestClassSourceFile = path;
+            sourceInfo.MainClassSourceFile = path;
 
             lineIndex = sourceInfo.FirstMainMethodDefLine;
-            while (--lineIndex >= 0 && sourceInfo.TestClassName == "")
+            while (--lineIndex >= 0 && sourceInfo.MainClassName == "")
             {
                 if (TestProject.GetILClassName(lines[lineIndex], out string? className))
                 {
-                    sourceInfo.TestClassName = className!;
-                    sourceInfo.TestClassLine = lineIndex;
+                    sourceInfo.MainClassName = className!;
+                    sourceInfo.MainClassLine = lineIndex;
                     while (--lineIndex >= 0)
                     {
                         string[] components = lines[lineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -1830,9 +1830,9 @@ namespace ILTransform
                             {
                                 namespaceName = namespaceName.Substring(1, namespaceName.Length - 2);
                             }
-                            sourceInfo.TestClassNamespace = namespaceName;
+                            sourceInfo.MainClassNamespace = namespaceName;
                             sourceInfo.NamespaceLine = lineIndex;
-                            sourceInfo.TestClassName = namespaceName + "." + sourceInfo.TestClassName;
+                            sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                         }
                      }
                      break;
@@ -1942,16 +1942,16 @@ namespace ILTransform
             // - Each inner list of projects is an _d, _o, etc., family
             Dictionary<string, Dictionary<string, List<TestProject>>> classNameRootProjectNameMap = new Dictionary<string, Dictionary<string, List<TestProject>>>();
 
-            foreach (TestProject project in _projects.Where(p => p.TestClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
+            foreach (TestProject project in _projects.Where(p => p.MainClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
             {
-                Utils.AddToMultiMap(_classNameMap, project.TestClassName, project);
-                Utils.AddToNestedMultiMap(_classNameDbgOptMap, project.TestClassName, project.DebugOptimize, project);
+                Utils.AddToMultiMap(_classNameMap, project.MainClassName, project);
+                Utils.AddToNestedMultiMap(_classNameDbgOptMap, project.MainClassName, project.DebugOptimize, project);
 
                 project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
                 string projectWithoutSuffix = Path.Combine(
                     Path.GetDirectoryName(project.AbsolutePath)!,
                     rootName + Path.GetExtension(project.AbsolutePath));
-                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.TestClassName, projectWithoutSuffix, project);
+                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.MainClassName, projectWithoutSuffix, project);
 
                 foreach (string file in project.CompileFiles)
                 {
@@ -1984,7 +1984,7 @@ namespace ILTransform
 
                 // Note: lots of duplication with DeduplicateProjectNames
 
-                string originalNamespace = projectGroups[0].Value[0].TestClassNamespace;
+                string originalNamespace = projectGroups[0].Value[0].MainClassNamespace;
                 if (new string[] { "Test", "JitTest", "Repro", "DefaultNamespace" }.Contains(originalNamespace)
                     || originalNamespace.Length <= 1)
                 {
@@ -1998,7 +1998,7 @@ namespace ILTransform
                 List<string> newNamespaces;
 
                 List<string>? extensionAttempt = (originalNamespace != null) ? projectGroups.Select(g => g.Value[0].IsILProject ? "il" : "").ToList() : null;
-                List<string> filenameAttempt = projectGroups.Select(g => Path.GetFileNameWithoutExtension(g.Value[0].TestClassSourceFile)).ToList();
+                List<string> filenameAttempt = projectGroups.Select(g => Path.GetFileNameWithoutExtension(g.Value[0].MainClassSourceFile)).ToList();
                 List<string> projectAttempt = projectGroups.Select(g => Path.GetFileNameWithoutExtension(g.Key)).ToList();
                 List<string>? dirAttempt = Utils.GetNearestDirectoryWithDifferences(projectGroups.Select(g => g.Key).ToList());
                 if (dirAttempt != null)
@@ -2013,7 +2013,7 @@ namespace ILTransform
                 int bestSize = Math.Min(extensionSize, Math.Min(filenameSize, Math.Min(projectSize, dirSize)));
                 if (bestSize == int.MaxValue)
                 {
-                    Console.WriteLine("No simple namespace renames for projects with class {0}:", projectGroups[0].Value[0].TestClassName);
+                    Console.WriteLine("No simple namespace renames for projects with class {0}:", projectGroups[0].Value[0].MainClassName);
                     projectGroups.ForEach(g => g.Value.ForEach(p => Console.WriteLine("  {0}", p.AbsolutePath)));
                     continue;
                 }

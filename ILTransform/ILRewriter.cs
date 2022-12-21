@@ -64,9 +64,9 @@ namespace ILTransform
         // Side effects: Rewrites CS/IL source file and proj file
         public void Rewrite()
         {
-            if (!string.IsNullOrEmpty(_testProject.TestClassSourceFile) && _rewrittenFiles.Add(_testProject.TestClassSourceFile))
+            if (!string.IsNullOrEmpty(_testProject.MainClassSourceFile) && _rewrittenFiles.Add(_testProject.MainClassSourceFile))
             {
-                RewriteFile(_testProject.TestClassSourceFile);
+                RewriteFile(_testProject.MainClassSourceFile);
             }
 
             RewriteProject(_testProject.NewAbsolutePath ?? _testProject.AbsolutePath);
@@ -152,12 +152,12 @@ namespace ILTransform
 
                     if (_settings.MakePublic)
                     {
-                        foreach (string baseClassName in _testProject.TestClassBases)
+                        foreach (string baseClassName in _testProject.MainClassBases)
                         {
                             for (int index = 0; index < lines.Count; index++)
                             {
                                 string line = lines[index];
-                                if (index != _testProject.TestClassLine &&
+                                if (index != _testProject.MainClassLine &&
                                     (line.Contains("class") || line.Contains("struct")) &&
                                     line.Contains(baseClassName))
                                 {
@@ -211,11 +211,11 @@ namespace ILTransform
 
             if (_settings.MakePublic)
             {
-                if (_testProject.TestClassLine >= 0)
+                if (_testProject.MainClassLine >= 0)
                 {
-                    string line = lines[_testProject.TestClassLine];
+                    string line = lines[_testProject.MainClassLine];
                     TestProject.MakePublic(isILTest: isILTest, ref line, force: true);
-                    lines[_testProject.TestClassLine] = line;
+                    lines[_testProject.MainClassLine] = line;
                     rewritten = true;
                 }
                 else
@@ -354,7 +354,7 @@ namespace ILTransform
             if (_settings.DeduplicateClassNames
                 && _testProject.DeduplicatedNamespaceName != null)
             {
-                if (_testProject.TestClassNamespace == "")
+                if (_testProject.MainClassNamespace == "")
                 {
                     int lineIndex = _testProject.NamespaceLine;
                     lines.Insert(lineIndex, (isILTest ? "." : "") + "namespace " + _testProject.DeduplicatedNamespaceName);
@@ -383,7 +383,7 @@ namespace ILTransform
                         {
                             lines[lineIndex] = ReplaceIdent(
                                 lines[lineIndex],
-                                _testProject.TestClassNamespace,
+                                _testProject.MainClassNamespace,
                                 _testProject.DeduplicatedNamespaceName,
                                 IdentKind.Namespace);
                         }
@@ -392,7 +392,7 @@ namespace ILTransform
                     {
                         lines[_testProject.NamespaceLine] =
                             lines[_testProject.NamespaceLine]
-                            .Replace(_testProject.TestClassNamespace, _testProject.DeduplicatedNamespaceName);
+                            .Replace(_testProject.MainClassNamespace, _testProject.DeduplicatedNamespaceName);
                     }
                 }
 
@@ -508,7 +508,7 @@ namespace ILTransform
             List<string> lines = new List<string>(File.ReadAllLines(path));
             bool rewritten = false;
             bool hasRequiresProcessIsolation = _testProject.HasRequiresProcessIsolation;
-            string quotedOldSourceName = '"' + Path.GetFileName(_testProject.SourceInfo.TestClassSourceFile) + '"';
+            string quotedOldSourceName = '"' + Path.GetFileName(_testProject.SourceInfo.MainClassSourceFile) + '"';
             for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
             {
                 string line = lines[lineIndex];
