@@ -11,6 +11,24 @@ namespace ILTransform
 {
     internal static class Utils
     {
+        internal static int SkipWhiteSpace(this string thisString, int index = 0)
+        {
+            while (index < thisString.Length && char.IsWhiteSpace(thisString[index]))
+            {
+                index++;
+            }
+            return index;
+        }
+
+        internal static int SkipNonWhiteSpace(this string thisString, int index = 0)
+        {
+            while (index < thisString.Length && !char.IsWhiteSpace(thisString[index]))
+            {
+                index++;
+            }
+            return index;
+        }
+
         internal static int EndIndexOf(this string thisString, string value)
         {
             int index = thisString.IndexOf(value);

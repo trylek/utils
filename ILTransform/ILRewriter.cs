@@ -299,10 +299,7 @@ namespace ILTransform
                             int start = assemblyIndex + AssemblyTag.Length;
                             for (; ; )
                             {
-                                while (start < line.Length && Char.IsWhiteSpace(line[start]))
-                                {
-                                    start++;
-                                }
+                                start = line.SkipWhiteSpace(start);
                                 const string LibraryTag = "library";
                                 if (start + LibraryTag.Length <= line.Length && line.Substring(start, LibraryTag.Length) == LibraryTag)
                                 {
@@ -734,10 +731,7 @@ namespace ILTransform
                 }
                 else if (char.IsWhiteSpace(c))
                 {
-                    while (++next < source.Length && char.IsWhiteSpace(source[next]))
-                    {
-                        // nothing
-                    }
+                    next = source.SkipWhiteSpace(next + 1);
                     kind = TokenKind.WhiteSpace;
                 }
                 else

@@ -207,17 +207,10 @@ namespace ILTransform
 
             if (force)
             {
-                int charIndex = 0;
-                while (charIndex < line.Length && char.IsWhiteSpace(line[charIndex]))
-                {
-                    charIndex++;
-                }
+                int charIndex = line.SkipWhiteSpace();
                 if (isILTest)
                 {
-                    while (charIndex < line.Length && !char.IsWhiteSpace(line[charIndex]))
-                    {
-                        charIndex++;
-                    }
+                    charIndex = line.SkipNonWhiteSpace(charIndex);
                     if (charIndex < line.Length)
                     {
                         charIndex++;
@@ -1485,15 +1478,7 @@ namespace ILTransform
             }
         }
 
-        private static int GetIndent(string line)
-        {
-            int indent = 0;
-            while (indent < line.Length && char.IsWhiteSpace(line[indent]))
-            {
-                indent++;
-            }
-            return indent;
-        }
+        private static int GetIndent(string line) => line.SkipWhiteSpace();
 
         private static void AnalyzeCSSource(string path, ref SourceInfo sourceInfo)
         {
@@ -1551,26 +1536,12 @@ namespace ILTransform
                             do
                             {
                                 line = lines[mainLine];
-                                int classNameStart = line.EndIndexOf("class ");
-                                if (classNameStart < 0)
+                                if (TryGetCSTypeName(line, out string typeName, out int typeNameEnd))
                                 {
-                                    classNameStart = line.EndIndexOf("struct ");
-                                }
-                                if (classNameStart >= 0)
-                                {
-                                    int classNameEnd = classNameStart;
-                                    while (line.Length > classNameEnd && TestProject.IsIdentifier(line[classNameEnd]))
-                                    {
-                                        classNameEnd++;
-                                    }
-                                    sourceInfo.MainClassName = line.Substring(classNameStart, classNameEnd - classNameStart);
+                                    sourceInfo.MainClassName = typeName;
                                     sourceInfo.MainClassLine = mainLine;
 
-                                    int basePos = classNameEnd;
-                                    while (basePos < line.Length && char.IsWhiteSpace(line[basePos]))
-                                    {
-                                        basePos++;
-                                    }
+                                    int basePos = line.SkipWhiteSpace(typeNameEnd);
                                     if (basePos < line.Length && line[basePos] == ':')
                                     {
                                         basePos++;
@@ -1694,6 +1665,38 @@ namespace ILTransform
                     break;
                 }
             }
+        }
+
+        private static bool TryGetCSTypeName(string line, out string typeName, out int typeNameEnd)
+        {
+            int typeNameStart = line.EndIndexOf("class ");
+            if (typeNameStart < 0)
+            {
+                typeNameStart = line.EndIndexOf("struct ");
+            }
+            if (typeNameStart < 0)
+            {
+                typeName = "";
+                typeNameEnd = -1;
+                return false;
+            }
+            typeNameStart = line.SkipWhiteSpace(typeNameStart);
+            int searchTypeNameEnd = typeNameStart;
+            while (searchTypeNameEnd < line.Length && TestProject.IsIdentifier(line[searchTypeNameEnd]))
+            {
+                searchTypeNameEnd++;
+            }
+
+            if (typeNameStart == searchTypeNameEnd)
+            {
+                typeName = "";
+                typeNameEnd = -1;
+                return false;
+            }
+
+            typeName = line.Substring(typeNameStart, searchTypeNameEnd - typeNameStart);
+            typeNameEnd = searchTypeNameEnd;
+            return true;
         }
 
         private static void AnalyzeILSource(string path, ref SourceInfo sourceInfo)
@@ -1890,11 +1893,7 @@ namespace ILTransform
                 {
                     if (--openBraces == 0)
                     {
-                        columnNumber++;
-                        while ((columnNumber < line.Length) && char.IsWhiteSpace(line[columnNumber]))
-                        {
-                            columnNumber++;
-                        }
+                        columnNumber = line.SkipWhiteSpace(columnNumber + 1);
                         if ((columnNumber != line.Length)
                             && line.AsSpan(columnNumber).StartsWith("//"))
                         {
