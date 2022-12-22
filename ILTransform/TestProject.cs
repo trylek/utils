@@ -726,6 +726,14 @@ namespace ILTransform
             }
         }
 
+        public void DumpMultiSourceProjects(TextWriter writer)
+        {
+            writer.WriteLine("PROJECT WITH MULTIPLE SOURCES");
+            writer.WriteLine("-----------------------------");
+            _projects.Where(p => p.CompileFiles.Length > 1).Select(p => p.AbsolutePath).ToList().ForEach(writer.WriteLine);
+            writer.WriteLine();
+        }
+
         public void DumpMultiProjectSources(TextWriter writer)
         {
             Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> potentialDuplicateMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();

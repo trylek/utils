@@ -163,6 +163,7 @@ namespace ILTransform
                     testStore.DumpDebugOptimizeStatistics(log);
                     testStore.DumpIrregularProjectSuffixes(log);
                     testStore.DumpImplicitSharedLibraries(log);
+                    testStore.DumpMultiSourceProjects(log);
                     testStore.DumpMultiProjectSources(log);
                     testStore.DumpDuplicateProjectContent(log);
                     testStore.DumpDuplicateSimpleProjectNames(log);
