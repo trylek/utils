@@ -1238,7 +1238,7 @@ namespace ILTransform
                         string testName = project.RelativePath.Replace('\\', '/');
                         if (project.MainClassName != "")
                         {
-                            writer.WriteLine("        TryTest(\"" + testName + "\", " + project.TestProjectAlias + "::" + project.MainClassName + ".TestEntrypoint, args);");
+                            writer.WriteLine("        TryTest(\"" + testName + "\", " + project.TestProjectAlias + "::" + project.MainClassName + ".TestEntryPoint, args);");
                         }
                         else
                         {
@@ -1510,9 +1510,9 @@ namespace ILTransform
                     sourceInfo.MainMethodName = "Main";
                     foundEntryPoint = true;
                 }
-                else if (line.Contains("TestEntrypoint()"))
+                else if (line.Contains("TestEntryPoint()"))
                 {
-                    sourceInfo.MainMethodName = "TestEntrypoint";
+                    sourceInfo.MainMethodName = "TestEntryPoint";
                     foundEntryPoint = true;
                 }
 
@@ -1652,15 +1652,9 @@ namespace ILTransform
                         continue;
                     }
                     sourceInfo.NamespaceLine = lineIndex;
-                    if (line.StartsWith("namespace "))
+                    if (TryGetCSNamespaceName(line, out string namespaceName))
                     {
-                        int namespaceNameStart = 10;
-                        int namespaceNameEnd = namespaceNameStart;
-                        while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd]))
-                        {
-                            namespaceNameEnd++;
-                        }
-                        sourceInfo.MainClassNamespace = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
+                        sourceInfo.MainClassNamespace = namespaceName;
                     }
                     break;
                 }
@@ -1696,6 +1690,25 @@ namespace ILTransform
 
             typeName = line.Substring(typeNameStart, searchTypeNameEnd - typeNameStart);
             typeNameEnd = searchTypeNameEnd;
+            return true;
+        }
+
+        private static bool TryGetCSNamespaceName(string line, out string namespaceName)
+        {
+            int namespaceNameStart = line.EndIndexOf("namespace ");
+            if (namespaceNameStart < 0)
+            {
+                namespaceName = "";
+                return false;
+            }
+
+            int namespaceNameEnd = namespaceNameStart;
+            while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd]))
+            {
+                namespaceNameEnd++;
+            }
+
+            namespaceName = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
             return true;
         }
 
