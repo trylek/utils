@@ -65,6 +65,7 @@ namespace ILTransform
     {
         public SourceInfo() { }
 
+        public List<string> TypeNames = new List<string>();
         public string MainClassName = "";
         public List<string> MainClassBases = new List<string>();
         public string MainClassNamespace = "";
@@ -99,6 +100,7 @@ namespace ILTransform
         public readonly bool CompileFilesIncludeProjectName;
         public readonly string[] ProjectReferences;
         public readonly SourceInfo SourceInfo;
+        public List<string> TypeNames => SourceInfo.TypeNames;
         public string MainClassName => SourceInfo.MainClassName;
         public List<string> MainClassBases => SourceInfo.MainClassBases;
         public string MainClassNamespace => SourceInfo.MainClassNamespace;
@@ -1502,6 +1504,35 @@ namespace ILTransform
                 sourceInfo.HasExit = true;
             }
 
+            string currentNamespace = "";
+            for (int lineNumber = 0; lineNumber < lines.Count; ++lineNumber)
+            {
+                string line = lines[lineNumber];
+                if (TryGetCSNamespaceName(line, out string namespaceName))
+                {
+                    if (string.IsNullOrEmpty(currentNamespace))
+                    {
+                        currentNamespace = namespaceName;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Two namespaces in {0}", path);
+                        currentNamespace = currentNamespace + "." + namespaceName;
+                    }
+                    continue;
+                }
+
+                if (TryGetCSTypeName(line, out string typeName, out _))
+                {
+                    if (!string.IsNullOrEmpty(currentNamespace))
+                    {
+                        typeName = currentNamespace + "." + typeName;
+                    }
+
+                    sourceInfo.TypeNames.Add(typeName);
+                }
+            }
+
             bool isMainFile = false;
             for (int mainLine = lines.Count; --mainLine >= 0;)
             {
@@ -1598,15 +1629,8 @@ namespace ILTransform
                                     while (--mainLine >= 0)
                                     {
                                         line = lines[mainLine];
-                                        int namespaceNameStart = line.EndIndexOf("namespace ");
-                                        if (namespaceNameStart >= 0)
+                                        if (TryGetCSNamespaceName(line, out string namespaceName))
                                         {
-                                            int namespaceNameEnd = namespaceNameStart;
-                                            while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd]))
-                                            {
-                                                namespaceNameEnd++;
-                                            }
-                                            string namespaceName = line.Substring(namespaceNameStart, namespaceNameEnd - namespaceNameStart);
                                             sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                                         }
                                     }
