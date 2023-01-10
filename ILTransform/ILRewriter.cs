@@ -359,7 +359,7 @@ namespace ILTransform
                     lines.Add("}");
                     for (int i = lineIndex; i < lines.Count; i++)
                     {
-                        if (TestProject.GetILClassName(lines[i], out string? className))
+                        if (TestProject.TryGetILTypeName(source, lines, i, out string? className))
                         {
                             string qualifiedClassName = _testProject.DeduplicatedNamespaceName + "." + className!;
                             for (int s = lineIndex; s < lines.Count; s++)
@@ -387,9 +387,13 @@ namespace ILTransform
                     }
                     else
                     {
-                        lines[_testProject.NamespaceLine] =
-                            lines[_testProject.NamespaceLine]
-                            .Replace(_testProject.MainClassNamespace, _testProject.DeduplicatedNamespaceName);
+                        // C#
+                        if (_testProject.NamespaceIdentLine != -1)
+                        {
+                            lines[_testProject.NamespaceIdentLine] =
+                                lines[_testProject.NamespaceIdentLine]
+                                .Replace(_testProject.MainClassNamespace, _testProject.DeduplicatedNamespaceName);
+                        }
                     }
                 }
 
@@ -413,6 +417,71 @@ namespace ILTransform
             {
                 if (lines.RemoveAll(line => line.Contains(".module")) > 0)
                 {
+                    rewritten = true;
+                }
+            }
+
+            if (_settings.CleanupILSystemRuntimeReference && isILTest)
+            {
+                for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
+                {
+                    int assemblyStartLineIndex = lineIndex;
+                    string line = lines[lineIndex];
+                    int assemblyIndex = line.EndIndexOf(".assembly");
+                    if (assemblyIndex < 0)
+                    {
+                        continue;
+                    }
+
+                    int externIndex = line.SkipWhiteSpace(assemblyIndex);
+                    // This would miss
+                    //
+                    // .assembly extern
+                    // foo
+                    const string externString = "extern ";
+                    if (!line.AsSpan(externIndex).StartsWith(externString))
+                    {
+                        continue;
+                    }
+
+                    int nameIndex = line.SkipWhiteSpace(externIndex + externString.Length);
+                    const string systemRuntimeString = "System.Runtime";
+                    if (!line.AsSpan(nameIndex).StartsWith(systemRuntimeString))
+                    {
+                        continue;
+                    }
+                    int afterNameIndex = nameIndex + systemRuntimeString.Length;
+                    int nextIndex = line.SkipWhiteSpace(afterNameIndex);
+                    if (afterNameIndex != line.Length && afterNameIndex == nextIndex)
+                    {
+                        // Allows  ".assembly extern System.Runtime<eol>"
+                        // Rejects ".assembly extern System.Runtime.Foo"
+                        continue;
+                    }
+
+                    int braceIndex = nextIndex;
+                    while (true)
+                    {
+                        braceIndex = line.IndexOf('{', braceIndex);
+                        if (braceIndex >= 0)
+                        {
+                            break;
+                        }
+                        line = lines[++lineIndex];
+                        braceIndex = 0;
+                    }
+
+                    (int closeBraceLine, int afterCloseBraceColumn) = TestProjectStore.FindCloseBrace(lines, lineIndex, braceIndex + 1);
+
+                    if (afterCloseBraceColumn != lines[closeBraceLine].Length)
+                    {
+                        Console.WriteLine("Extra characters after } in {0}:{1}", source, closeBraceLine);
+                        Console.WriteLine(lines[closeBraceLine]);
+                        continue;
+                    }
+
+                    lines.RemoveRange(assemblyStartLineIndex, closeBraceLine - assemblyStartLineIndex);
+                    lines[assemblyStartLineIndex] = ".assembly extern System.Runtime { .publickeytoken = (B0 3F 5F 7F 11 D5 0A 3A ) }";
                     rewritten = true;
                 }
             }
@@ -650,7 +719,7 @@ namespace ILTransform
             => (index + 1 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "(";
 
-        private static string[] TypeOperators = { "ldtoken", "box", "initobj", "stobj", "isinst", "castclass", "catch" };
+        private static string[] TypeOperators = { "ldtoken", "box", "initobj", "ldobj", "stobj", "cpobj", "isinst", "castclass", "catch", "sizeof", "ldelema", "newarr" };
         private bool IsOperatorType(List<string> tokens, List<TokenKind> kinds, int index)
             => !IsNamespacePrefix(tokens, kinds, index)
             && (index >= 2)
@@ -811,7 +880,8 @@ namespace ILTransform
                         {
                             // good
                         }
-                        else if (IsNamespacePrefix(tokens, kinds, i)
+                        else if (IsNamespaceDeclName(tokens, kinds, i)
+                            || IsNamespacePrefix(tokens, kinds, i)
                             || IsMethodName(tokens, kinds, i)
                             || IsTypeNameDef(tokens, kinds, i)
                             || IsVariableName(tokens, kinds, i))

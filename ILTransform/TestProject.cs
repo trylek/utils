@@ -80,8 +80,20 @@ namespace ILTransform
         public int LastHeaderCommentLine = -1; // will include one blank after comments if it exists
         public int LastUsingLine = -1;
         public int NamespaceLine = -1;
+        public int NamespaceIdentLine = -1;
         public bool HasFactAttribute = false;
         public bool HasExit = false;
+    }
+
+    public struct TestProjectPathEqualityComparer : IEqualityComparer<(string, TestProject)>
+    {
+        public bool Equals((string, TestProject) project1, (string, TestProject) project2)
+        {
+            if (project1.Item2 == null || project2.Item2 == null) return object.ReferenceEquals(project1.Item2, project2.Item2);
+            return project1.Item2.AbsolutePath == project2.Item2.AbsolutePath;
+        }
+
+        public int GetHashCode((string, TestProject) project) => project.Item2.GetHashCode();
     }
 
     public class TestProject
@@ -115,6 +127,7 @@ namespace ILTransform
         public int LastHeaderCommentLine => SourceInfo.LastHeaderCommentLine;
         public int LastUsingLine => SourceInfo.LastUsingLine;
         public int NamespaceLine => SourceInfo.NamespaceLine;
+        public int NamespaceIdentLine => SourceInfo.NamespaceIdentLine;
         public bool HasFactAttribute => SourceInfo.HasFactAttribute;
         public Dictionary<string, string> AllProperties;
         public HashSet<string> AllItemGroups;
@@ -185,7 +198,7 @@ namespace ILTransform
 
         public static bool IsIdentifier(char c)
         {
-            return char.IsDigit(c) || char.IsLetter(c) || c == '_' || c == '@' || c == '$';
+            return char.IsDigit(c) || char.IsLetter(c) || c == '_' || c == '@' || c == '$' || c == '`';
         }
 
         private static Regex PublicRegex = new Regex(@"public\s+");
@@ -292,24 +305,42 @@ namespace ILTransform
             return line;
         }
 
-        public static bool GetILClassName(string line, out string? className)
+        public static bool TryGetILNamespaceName(string path, string line, out string namespaceName)
         {
-            int scanIndex = line.EndIndexOf(".class");
-            if (scanIndex < 0)
+            string[] components = line.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+            if (components.Length < 2 || components[0] != ".namespace")
             {
-                scanIndex = line.EndIndexOf(".struct");
-            }
-            if (scanIndex < 0)
-            {
-                className = null;
+                namespaceName = "";
                 return false;
             }
 
-            while (scanIndex < line.Length)
+            namespaceName = components[1];
+            if (namespaceName.StartsWith("\'"))
             {
-                if (char.IsWhiteSpace(line[scanIndex]))
+                namespaceName = namespaceName.Substring(1, namespaceName.Length - 2);
+            }
+            return true;
+        }
+
+        public static bool TryGetILTypeName(string path, List<string> lines, int lineIndex, out string typeName)
+        {
+            string line = lines[lineIndex];
+            if (!line.IndicesOf(".class", out _, out int scanIndex)
+                && !line.IndicesOf(".struct", out _, out scanIndex)
+                && !line.IndicesOf(".interface", out _, out scanIndex))
+            {
+                typeName = "";
+                return false;
+            }
+
+            while (lineIndex < lines.Count || scanIndex < line.Length)
+            {
+                scanIndex = line.SkipWhiteSpace(scanIndex);
+                if (lineIndex + 1 < lines.Count && scanIndex == line.Length)
                 {
-                    scanIndex++;
+                    lineIndex++;
+                    line = lines[lineIndex];
+                    scanIndex = 0;
                     continue;
                 }
                 if (scanIndex + 1 < line.Length && line[scanIndex] == '/' && line[scanIndex + 1] == '*')
@@ -329,7 +360,7 @@ namespace ILTransform
                     {
                         scanIndex++;
                     }
-                    className = line.Substring(identStart, scanIndex - identStart);
+                    typeName = line.Substring(identStart, scanIndex - identStart);
                     return true;
                 }
                 if (IsIdentifier(line[scanIndex]))
@@ -338,8 +369,8 @@ namespace ILTransform
                     while (++scanIndex < line.Length && (IsIdentifier(line[scanIndex]) || (line[scanIndex] == '.')))
                     {
                     }
-                    className = line.Substring(identStart, scanIndex - identStart);
-                    switch (className)
+                    typeName = line.Substring(identStart, scanIndex - identStart);
+                    switch (typeName)
                     {
                         case "auto":
                         case "ansi":
@@ -355,7 +386,11 @@ namespace ILTransform
                             continue;
 
                         case "nested":
-                            className = null;
+                            // This is a bit precarious, but we're going to just ignore nested types for now.
+                            // For example, if an entrypoint in NS1.NS2.C1/C2::Main, we'll skip the .class for
+                            // C2 and end up at the C1.  It's probably ok to just be checking (and possibly)
+                            // renaming C1 there, but it will be something to watch.
+                            typeName = "";
                             return false;
 
                         default:
@@ -364,7 +399,8 @@ namespace ILTransform
                 }
                 break; // parse error
             }
-            className = null;
+            Console.WriteLine("Found IL class/struct with no type name in {0}", path);
+            typeName = "";
             return false;
         }
 
@@ -553,7 +589,7 @@ namespace ILTransform
             "DisableProjectBuild", // no runtime considerations - it's either there or not
             "RestorePackages",
             "TargetFramework", //! VERIFY
-            "ReferenceXUnitWrapperGenerator", //! VERIFY
+            "ReferenceXUnitWrapperGenerator", //! VERIFY -- according a test comment, this should block Main->TestEntryPoint, etc.
             "EnableUnsafeBinaryFormatterSerialization", //! VERIFY
         };
 
@@ -856,7 +892,6 @@ namespace ILTransform
 
             writer.WriteLine("#PROJECTS | DUPLICATE TEST CLASS NAME");
             writer.WriteLine("-------------------------------------");
-            writer.WriteLine("{0,-9} | (total)", duplicateClassNames.Where(kvp => kvp.Value.Count > 1).Sum(kvp => kvp.Value.Count));
 
             foreach (KeyValuePair<string, List<TestProject>> kvp in duplicateClassNames.Where(kvp => kvp.Value.Count > 1).OrderByDescending(kvp => kvp.Value.Count))
             {
@@ -872,7 +907,7 @@ namespace ILTransform
                 writer.WriteLine(new string('-', title.Length));
                 foreach (TestProject project in kvp.Value.OrderBy(prj => prj.RelativePath))
                 {
-                    writer.WriteLine(project.AbsolutePath);
+                    writer.WriteLine("{0} -> {1}", project.AbsolutePath, project.DeduplicatedNamespaceName);
                 }
                 writer.WriteLine();
             }
@@ -1490,6 +1525,8 @@ namespace ILTransform
 
         private static int GetIndent(string line) => line.SkipWhiteSpace();
 
+        private static readonly string[] MethodModifierStrings = new string[] { "public", "private", "internal", "unsafe", "static" };
+
         private static void AnalyzeCSSource(string path, ref SourceInfo sourceInfo)
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));
@@ -1516,13 +1553,13 @@ namespace ILTransform
                     }
                     else
                     {
-                        Console.WriteLine("Two namespaces in {0}", path);
+                        Console.WriteLine("Two namespaces in {0}", path); // need to think about this case
                         currentNamespace = currentNamespace + "." + namespaceName;
                     }
                     continue;
                 }
 
-                if (TryGetCSTypeName(line, out string typeName, out _))
+                if (TryGetCSTypeName(path, line, out string typeName, out _))
                 {
                     if (!string.IsNullOrEmpty(currentNamespace))
                     {
@@ -1534,113 +1571,146 @@ namespace ILTransform
             }
 
             bool isMainFile = false;
+            if (lines.Any(line => line.Contains("[Fact]") || line.Contains("[ConditionalFact]")))
+            {
+                sourceInfo.HasFactAttribute = true;
+                isMainFile = true;
+            }
+
             for (int mainLine = lines.Count; --mainLine >= 0;)
             {
                 string line = lines[mainLine];
-                if (line.Contains("[Fact]") || line.Contains("[ConditionalFact]"))
-                {
-                    sourceInfo.HasFactAttribute = true;
-                    isMainFile = true;
-                }
 
                 bool foundEntryPoint = false;
-                if (line.Contains("int Main()") || line.Contains("void Main()"))
+                if (line.IndicesOf("int Main()", out int mainColumnStart, out int mainColumnEnd)
+                    || line.IndicesOf("void Main()", out mainColumnStart, out mainColumnEnd))
                 {
                     sourceInfo.MainMethodName = "Main";
                     foundEntryPoint = true;
                 }
-                else if (line.Contains("TestEntryPoint()"))
+                else if (line.IndicesOf("int TestEntryPoint()", out mainColumnStart, out mainColumnEnd)
+                    || line.IndicesOf("void TestEntryPoint()", out mainColumnStart, out mainColumnEnd))
                 {
                     sourceInfo.MainMethodName = "TestEntryPoint";
                     foundEntryPoint = true;
                 }
 
-                if (foundEntryPoint)
+                if (!foundEntryPoint)
                 {
-                    int mainLineIndent = GetIndent(line);
+                    continue;
+                }
 
-                    // First and Last aren't accurate here
-                    sourceInfo.FirstMainMethodDefLine = mainLine;
-                    sourceInfo.MainTokenMethodLine = mainLine;
-                    sourceInfo.LastMainMethodDefLine = mainLine;
+                int firstMainLine = mainLine;
+                int firstMainColumn = mainColumnStart;
 
-                    isMainFile = true;
-                    sourceInfo.MainClassSourceFile = path;
-                    while (--mainLine >= 0)
+                (int searchLine, int searchColumn) = lines.ReverseSkipWhiteSpace(mainLine, mainColumnStart - 1);
+                bool found;
+                do
+                {
+                    found = false;
+                    foreach (string modifier in MethodModifierStrings)
                     {
-                        line = lines[mainLine];
-                        int lineIndent = GetIndent(line);
-                        if (lineIndent < mainLineIndent && line.Contains('{'))
+                        if (lines[searchLine].AsSpan(0, searchColumn + 1).EndsWith(modifier))
                         {
-                            do
+                            found = true;
+                            firstMainLine = searchLine;
+                            firstMainColumn = searchColumn - modifier.Length;
+                            (searchLine, searchColumn) = lines.ReverseSkipWhiteSpace(firstMainLine, firstMainColumn - 1);
+                        }
+                    }
+                }
+                while (found);
+                if (lines[firstMainLine].ReverseSkipWhiteSpace(firstMainColumn - 1) != -1)
+                {
+                    Console.WriteLine("Found unexpected non-whitespace in Main/TestEntryPoint declaration");
+                    Console.WriteLine("{0}:{1}", path, firstMainLine);
+                    Console.WriteLine(lines[firstMainLine]);
+                    continue;
+                }
+
+                int mainLineIndent = GetIndent(line);
+
+                // First is reasonable but not perfect.  Last isn't accurate here.
+                sourceInfo.FirstMainMethodDefLine = firstMainLine;
+                sourceInfo.MainTokenMethodLine = mainLine;
+                sourceInfo.LastMainMethodDefLine = mainLine;
+
+                isMainFile = true;
+                sourceInfo.MainClassSourceFile = path;
+                while (--mainLine >= 0)
+                {
+                    line = lines[mainLine];
+                    int lineIndent = GetIndent(line);
+                    if (lineIndent < mainLineIndent && line.Contains('{'))
+                    {
+                        do
+                        {
+                            line = lines[mainLine];
+                            if (TryGetCSTypeName(path, line, out string typeName, out int typeNameEnd))
                             {
-                                line = lines[mainLine];
-                                if (TryGetCSTypeName(line, out string typeName, out int typeNameEnd))
+                                sourceInfo.MainClassName = typeName;
+                                sourceInfo.MainClassLine = mainLine;
+
+                                int basePos = line.SkipWhiteSpace(typeNameEnd);
+                                if (basePos < line.Length && line[basePos] == ':')
                                 {
-                                    sourceInfo.MainClassName = typeName;
-                                    sourceInfo.MainClassLine = mainLine;
-
-                                    int basePos = line.SkipWhiteSpace(typeNameEnd);
-                                    if (basePos < line.Length && line[basePos] == ':')
+                                    basePos++;
+                                    while (basePos < line.Length && line[basePos] != '{')
                                     {
-                                        basePos++;
-                                        while (basePos < line.Length && line[basePos] != '{')
+                                        if (char.IsWhiteSpace(line[basePos]) || line[basePos] == ',')
                                         {
-                                            if (char.IsWhiteSpace(line[basePos]) || line[basePos] == ',')
-                                            {
-                                                basePos++;
-                                                continue;
-                                            }
-                                            int baseIdentBegin = basePos;
-                                            while (basePos < line.Length && TestProject.IsIdentifier(line[basePos]))
-                                            {
-                                                basePos++;
-                                            }
+                                            basePos++;
+                                            continue;
+                                        }
+                                        int baseIdentBegin = basePos;
+                                        while (basePos < line.Length && TestProject.IsIdentifier(line[basePos]))
+                                        {
+                                            basePos++;
+                                        }
 
-                                            // For a generic (see code below for parsing <TArgs>), only store the base name.
-                                            if (basePos > baseIdentBegin)
-                                            {
-                                                sourceInfo.MainClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
-                                            }
+                                        // For a generic (see code below for parsing <TArgs>), only store the base name.
+                                        if (basePos > baseIdentBegin)
+                                        {
+                                            sourceInfo.MainClassBases.Add(line.Substring(baseIdentBegin, basePos - baseIdentBegin));
+                                        }
 
-                                            if (basePos < line.Length && line[basePos] == '<')
+                                        if (basePos < line.Length && line[basePos] == '<')
+                                        {
+                                            int genericNesting = 1;
+                                            basePos++;
+                                            while (basePos < line.Length)
                                             {
-                                                int genericNesting = 1;
-                                                basePos++;
-                                                while (basePos < line.Length)
+                                                char c = line[basePos++];
+                                                if (c == '<')
                                                 {
-                                                    char c = line[basePos++];
-                                                    if (c == '<')
+                                                    genericNesting++;
+                                                }
+                                                else if (c == '>')
+                                                {
+                                                    if (--genericNesting == 0)
                                                     {
-                                                        genericNesting++;
-                                                    }
-                                                    else if (c == '>')
-                                                    {
-                                                        if (--genericNesting == 0)
-                                                        {
-                                                            break;
-                                                        }
+                                                        break;
                                                     }
                                                 }
                                             }
                                         }
                                     }
+                                }
 
-                                    while (--mainLine >= 0)
+                                while (--mainLine >= 0)
+                                {
+                                    line = lines[mainLine];
+                                    if (TryGetCSNamespaceName(line, out string namespaceName))
                                     {
-                                        line = lines[mainLine];
-                                        if (TryGetCSNamespaceName(line, out string namespaceName))
-                                        {
-                                            sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
-                                        }
+                                        sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                                     }
                                 }
                             }
-                            while (--mainLine >= 0);
                         }
+                        while (--mainLine >= 0);
                     }
-                    break;
                 }
+                break;
             }
 
             if (isMainFile)
@@ -1683,9 +1753,11 @@ namespace ILTransform
                     {
                         continue;
                     }
+                    // Should also skip multi-line /* */ here
                     sourceInfo.NamespaceLine = lineIndex;
                     if (TryGetCSNamespaceName(line, out string namespaceName))
                     {
+                        sourceInfo.NamespaceIdentLine = lineIndex;
                         sourceInfo.MainClassNamespace = namespaceName;
                     }
                     break;
@@ -1693,19 +1765,31 @@ namespace ILTransform
             }
         }
 
-        private static bool TryGetCSTypeName(string line, out string typeName, out int typeNameEnd)
+        private static bool TryGetCSTypeName(string path, string line, out string typeName, out int typeNameEnd)
         {
-            int typeNameStart = line.EndIndexOf("class ");
-            if (typeNameStart < 0)
-            {
-                typeNameStart = line.EndIndexOf("struct ");
-            }
-            if (typeNameStart < 0)
+            int commentStart = line.IndexOf("//");
+            if (commentStart == -1) commentStart = line.Length;
+
+            if (!line.IndicesOf("class ", 0, commentStart, out int typeKeywordIndex, out int typeNameStart)
+                && !line.IndicesOf("struct ", 0, commentStart, out typeKeywordIndex, out typeNameStart))
             {
                 typeName = "";
                 typeNameEnd = -1;
                 return false;
             }
+            if (typeKeywordIndex != 0)
+            {
+                int beforeKeyword = typeKeywordIndex - 1;
+                int precedingIndex = line.ReverseSkipWhiteSpace(beforeKeyword);
+                if ((precedingIndex == beforeKeyword) || // no whitespace before keyword
+                    (precedingIndex >= 0 && line[precedingIndex] == ':')) // where T : class
+                {
+                    typeName = "";
+                    typeNameEnd = -1;
+                    return false;
+                }
+            }
+
             typeNameStart = line.SkipWhiteSpace(typeNameStart);
             int searchTypeNameEnd = typeNameStart;
             while (searchTypeNameEnd < line.Length && TestProject.IsIdentifier(line[searchTypeNameEnd]))
@@ -1717,6 +1801,8 @@ namespace ILTransform
             {
                 typeName = "";
                 typeNameEnd = -1;
+                Console.WriteLine("Found C# class/struct with no type name in {0}:", path);
+                Console.WriteLine("  {0}", line);
                 return false;
             }
 
@@ -1758,6 +1844,7 @@ namespace ILTransform
                 sourceInfo.HasExit = true;
             }
 
+            AnalyzeILSourceForTypeNames(path, lines, ref sourceInfo);
             AnalyzeILSourceForEntryPoint(path, lines, ref sourceInfo);
 
             if (sourceInfo.NamespaceLine < 0)
@@ -1771,6 +1858,38 @@ namespace ILTransform
 
             // IL projects don't actually need the Fact attribute providing they have a Main method
             sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodDefLine >= 0);
+        }
+
+        private static void AnalyzeILSourceForTypeNames(string path, List<string> lines, ref SourceInfo sourceInfo)
+        {
+            string currentNamespace = "";
+            for (int lineNumber = 0; lineNumber < lines.Count; ++lineNumber)
+            {
+                string line = lines[lineNumber];
+                if (TestProject.TryGetILNamespaceName(path, line, out string namespaceName))
+                {
+                    if (string.IsNullOrEmpty(currentNamespace))
+                    {
+                        currentNamespace = namespaceName;
+                    }
+                    else
+                    {
+                        Console.WriteLine("Two namespaces in {0}", path); // need to think about this case
+                        currentNamespace = currentNamespace + "." + namespaceName;
+                    }
+                    continue;
+                }
+
+                if (TestProject.TryGetILTypeName(path, lines, lineNumber, out string typeName))
+                {
+                    if (!string.IsNullOrEmpty(currentNamespace))
+                    {
+                        typeName = currentNamespace + "." + typeName;
+                    }
+
+                    sourceInfo.TypeNames.Add(typeName);
+                }
+            }
         }
 
         private static void AnalyzeILSourceForEntryPoint(string path, List<string> lines, ref SourceInfo sourceInfo)
@@ -1864,22 +1983,17 @@ namespace ILTransform
             lineIndex = sourceInfo.FirstMainMethodDefLine;
             while (--lineIndex >= 0 && sourceInfo.MainClassName == "")
             {
-                if (TestProject.GetILClassName(lines[lineIndex], out string? className))
+                if (TestProject.TryGetILTypeName(path, lines, lineIndex, out string className))
                 {
-                    sourceInfo.MainClassName = className!;
+                    sourceInfo.MainClassName = className;
                     sourceInfo.MainClassLine = lineIndex;
                     while (--lineIndex >= 0)
                     {
-                        string[] components = lines[lineIndex].Split(' ', StringSplitOptions.RemoveEmptyEntries);
-                        if (components.Length >= 2 && components[0] == ".namespace")
+                        if (TestProject.TryGetILNamespaceName(path, lines[lineIndex], out string namespaceName))
                         {
-                            string namespaceName = components[1];
-                            if (namespaceName.StartsWith("\'"))
-                            {
-                                namespaceName = namespaceName.Substring(1, namespaceName.Length - 2);
-                            }
                             sourceInfo.MainClassNamespace = namespaceName;
                             sourceInfo.NamespaceLine = lineIndex;
+                            sourceInfo.NamespaceIdentLine = lineIndex;
                             sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                         }
                      }
@@ -1888,7 +2002,7 @@ namespace ILTransform
             }
         }
 
-        private static (int, int) FindCloseBrace(List<string> lines, int startLineNumber, int startColumn)
+        internal static (int, int) FindCloseBrace(List<string> lines, int startLineNumber, int startColumn)
         {
             int openBraces = 1;
             int lineNumber = startLineNumber;
@@ -1975,7 +2089,7 @@ namespace ILTransform
             }
         }
 
-        // Side effects: Adds to _classNameMap, adds to _namespaceNameMap, sets DeduplicatedNamespaceName
+        // Side effects: Adds to _classNameMap, adds to _classNameDbgOptMap, sets DeduplicatedNamespaceName
         private void PopulateClassNameMap()
         {
             HashSet<string> ilNamespaceClasses = new HashSet<string>();
@@ -1986,16 +2100,20 @@ namespace ILTransform
             // - Each inner list of projects is an _d, _o, etc., family
             Dictionary<string, Dictionary<string, List<TestProject>>> classNameRootProjectNameMap = new Dictionary<string, Dictionary<string, List<TestProject>>>();
 
-            foreach (TestProject project in _projects.Where(p => p.MainClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
+            //foreach (TestProject project in _projects.Where(p => p.MainClassName != "" && !string.IsNullOrEmpty(p.MainMethodName)))
+            foreach (TestProject project in _projects)
             {
-                Utils.AddToMultiMap(_classNameMap, project.MainClassName, project);
-                Utils.AddToNestedMultiMap(_classNameDbgOptMap, project.MainClassName, project.DebugOptimize, project);
+                foreach (string typeName in project.TypeNames)
+                {
+                    Utils.AddToMultiMap(_classNameMap, typeName, project);
+                    Utils.AddToNestedMultiMap(_classNameDbgOptMap, typeName, project.DebugOptimize, project);
 
-                project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
-                string projectWithoutSuffix = Path.Combine(
-                    Path.GetDirectoryName(project.AbsolutePath)!,
-                    rootName + Path.GetExtension(project.AbsolutePath));
-                Utils.AddToNestedMultiMap(classNameRootProjectNameMap, project.MainClassName, projectWithoutSuffix, project);
+                    project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
+                    string projectWithoutSuffix = Path.Combine(
+                        Path.GetDirectoryName(project.AbsolutePath)!,
+                        rootName + Path.GetExtension(project.AbsolutePath));
+                    Utils.AddToNestedMultiMap(classNameRootProjectNameMap, typeName, projectWithoutSuffix, project);
+                }
 
                 foreach (string file in project.CompileFiles)
                 {
@@ -2005,6 +2123,82 @@ namespace ILTransform
                 }
             }
 
+            List<KeyValuePair<string, List<TestProject>>> projectGroups =
+                classNameRootProjectNameMap // class name -> project file path(WITHOUT suffixes like _d that reuse source files) -> TestProjects
+                    .Select(kvp => kvp.Value) // project file path(WITHOUT suffixes like _d that reuse source files) -> TestProjects
+                    .Where(map => map.Count > 1) // Find conflicts
+                    .SelectMany(d => d) // Flatten dictionaries
+                    .ToList();
+
+            List<(string, TestProject)> representativeProjects =
+                projectGroups
+                    .Select(kvp => (kvp.Key, kvp.Value[0])) // Pair key with representative value
+                    .Distinct(new TestProjectPathEqualityComparer())
+                    .ToList();
+
+            // Note: lots of duplication with DeduplicateProjectNames?
+
+            string InterestingNamespace(TestProject project)
+            {
+                string originalNamespace = project.MainClassNamespace;
+                if (new string[] { "Test", "JitTest", "Repro", "DefaultNamespace" }.Contains(originalNamespace)
+                    || originalNamespace.Length <= 1)
+                {
+                    originalNamespace = "";
+                }
+                else
+                {
+                    originalNamespace = originalNamespace + "_";
+                }
+                return originalNamespace;
+            }
+
+            List<string> filenameAttempt = representativeProjects.Select(p => Path.GetFileNameWithoutExtension(p.Item2.MainClassSourceFile)).ToList();
+            List<string> projectAttempt = representativeProjects.Select(p => Path.GetFileNameWithoutExtension(p.Item1)).ToList();
+            List<string>? dirAttempt = Utils.GetNearestDirectoryWithDifferences(representativeProjects.Select(p => p.Item2.AbsolutePath).ToList());
+            if (dirAttempt != null)
+            {
+                dirAttempt = Utils.TrimSharedTokens(dirAttempt);
+            }
+            int filenameSize = filenameAttempt.AllUnique() ? filenameAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+            int projectSize = projectAttempt.AllUnique() ? projectAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+            int dirSize = (dirAttempt != null) && dirAttempt.AllUnique() ? dirAttempt.Select(s => s.Length).Sum() : int.MaxValue;
+
+            int bestSize = Math.Min(filenameSize, Math.Min(projectSize, dirSize));
+            if (bestSize == int.MaxValue)
+            {
+                Console.WriteLine("No simple namespace renames for projects");
+                return;
+            }
+
+            List<string> bestAttempt =
+                (bestSize == filenameSize) ? filenameAttempt
+                : (bestSize == projectSize) ? projectAttempt
+                : dirAttempt!;
+
+            foreach ((TestProject project, string newNamespace) in representativeProjects.Select(p => p.Item2).Zip(bestAttempt))
+            {
+                project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(InterestingNamespace(project) + newNamespace);
+            }
+
+            // Propagate DeduplicatedNamespaceName to the other projects with the same root
+            // (_d, _r, etc.)
+            foreach (List<TestProject> projects in projectGroups.Select(kvp => kvp.Value))
+            {
+                TestProject representativeProject = projects[0];
+                Debug.Assert(!string.IsNullOrEmpty(representativeProject.DeduplicatedNamespaceName));
+
+                foreach (TestProject project in projects.Skip(1))
+                {
+                    // A project might be in more than one group, so we can't just check for null
+                    // but it should get the same dedup name.
+                    Debug.Assert(project.DeduplicatedNamespaceName == null
+                        || project.DeduplicatedNamespaceName == representativeProject.DeduplicatedNamespaceName);
+                    project.DeduplicatedNamespaceName = representativeProject.DeduplicatedNamespaceName;
+                }
+            }
+
+            /*
             foreach (List<KeyValuePair<string, List<TestProject>>> projectGroups
                 in classNameRootProjectNameMap
                     .Select(kvp => kvp.Value)
@@ -2077,6 +2271,7 @@ namespace ILTransform
                     }
                 }
             }
+            */
         }
     }
 }

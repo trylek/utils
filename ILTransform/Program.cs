@@ -19,6 +19,7 @@ namespace ILTransform
         public bool UnifyDbgRelProjects;
         public bool CleanupILModule;
         public bool CleanupILAssembly;
+        public bool CleanupILSystemRuntimeReference;
         public bool GenerateWrappers;
     }
 
@@ -75,6 +76,10 @@ namespace ILTransform
                         {
                             settings.CleanupILAssembly = true;
                         }
+                        else if (arg == "-sr")
+                        {
+                            settings.CleanupILSystemRuntimeReference = true;
+                        }
                         else if (arg == "-n")
                         {
                             settings.DeduplicateProjectNames = true;
@@ -108,6 +113,7 @@ namespace ILTransform
                         || settings.UnifyDbgRelProjects
                         || settings.CleanupILModule
                         || settings.CleanupILAssembly
+                        || settings.CleanupILSystemRuntimeReference
                         || settings.GenerateWrappers))
                 {
                     throw new Exception("-p is not compatible with other rewriting options");

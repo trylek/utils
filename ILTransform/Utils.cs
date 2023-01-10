@@ -20,6 +20,43 @@ namespace ILTransform
             return index;
         }
 
+        internal static int ReverseSkipWhiteSpace(this string thisString, int index = 0)
+        {
+            while (index >= 0 && char.IsWhiteSpace(thisString[index]))
+            {
+                index--;
+            }
+            return index;
+        }
+
+        internal static (int, int) ReverseSkipWhiteSpace(this List<string> lines, int lineIndex = 0, int column = 0)
+        {
+            while (lineIndex >= 0
+                && column >= 0
+                && char.IsWhiteSpace(lines[lineIndex][column]))
+            {
+                if (column >= 0)
+                {
+                    column = lines[lineIndex].ReverseSkipWhiteSpace(column);
+                }
+
+                if (column == -1)
+                {
+                    lineIndex--;
+                    if (lineIndex >= 0)
+                    {
+                        column = lines[lineIndex].Length - 1;
+                    }
+                    else
+                    {
+                        column = -1;
+                    }
+                }
+            }
+
+            return (lineIndex, column);
+        }
+
         internal static int SkipNonWhiteSpace(this string thisString, int index = 0)
         {
             while (index < thisString.Length && !char.IsWhiteSpace(thisString[index]))
@@ -27,6 +64,32 @@ namespace ILTransform
                 index++;
             }
             return index;
+        }
+
+        internal static bool IndicesOf(this string thisString, string value, out int foundStart, out int foundEnd)
+        {
+            int index = thisString.IndexOf(value);
+            if (index == -1)
+            {
+                foundStart = foundEnd = -1;
+                return false;
+            }
+            foundStart = index;
+            foundEnd = index + value.Length;
+            return true;
+        }
+
+        internal static bool IndicesOf(this string thisString, string value, int startIndex, int length, out int foundStart, out int foundEnd)
+        {
+            int index = thisString.IndexOf(value, startIndex, length);
+            if (index == -1)
+            {
+                foundStart = foundEnd = -1;
+                return false;
+            }
+            foundStart = index;
+            foundEnd = index + value.Length;
+            return true;
         }
 
         internal static int EndIndexOf(this string thisString, string value)
