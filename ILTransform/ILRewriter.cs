@@ -97,7 +97,7 @@ namespace ILTransform
                 int lineIndex = _testProject.LastMainMethodDefLine;
                 if (lineIndex >= 0)
                 {
-                    if (_settings.CollapseMainSign
+                    if (_settings.CollapseMainLines
                         && (_testProject.FirstMainMethodDefLine != -1)
                         && (_testProject.FirstMainMethodDefLine < _testProject.LastMainMethodDefLine))
                     {
