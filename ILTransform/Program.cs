@@ -116,7 +116,6 @@ namespace ILTransform
                         || settings.MakePublic
                         || settings.CollapseMainLines
                         || settings.AddProcessIsolation
-                        || settings.UnifyDbgRelProjects
                         || settings.CleanupILModule
                         || settings.CleanupILAssembly
                         || settings.CleanupILSystemRuntimeReference
