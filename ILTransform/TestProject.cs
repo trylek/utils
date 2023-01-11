@@ -223,15 +223,21 @@ namespace ILTransform
             if (force)
             {
                 int charIndex = line.SkipWhiteSpace();
+                string preffix = line[..charIndex];
                 if (isILTest)
                 {
+                    // They always start like .method or .class but might end without spaces
                     charIndex = line.SkipNonWhiteSpace(charIndex);
+                    preffix = string.Concat(line.AsSpan(0, charIndex), " "); // Add space and move index
                     if (charIndex < line.Length)
                     {
                         charIndex++;
                     }
                 }
-                line = string.Concat(line.AsSpan(0, charIndex), "public ", line.AsSpan(charIndex));
+                // Avoid white space at the end if line is ".class" or add white space if something continues
+                // after the new "public" token.
+                string suffix = charIndex == line.Length ? "" : string.Concat(" ", line.AsSpan(charIndex));
+                line = string.Concat(preffix, "public", suffix);
                 return true;
             }
 
