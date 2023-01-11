@@ -61,7 +61,7 @@ namespace ILTransform
                         {
                             settings.MakePublic = true;
                         }
-                        else if (arg =="-collapse-main-sign")
+                        else if (arg =="-collapse-main-sig")
                         {
                             settings.CollapseMainLines = true;
                         }
