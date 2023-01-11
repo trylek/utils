@@ -101,16 +101,13 @@ namespace ILTransform
                         && (_testProject.FirstMainMethodDefLine != -1)
                         && (_testProject.FirstMainMethodDefLine < _testProject.LastMainMethodDefLine))
                     {
-                        int mainLine = _testProject.FirstMainMethodDefLine;
-                        string collapsedLine = lines[mainLine].TrimEnd();
-                        for(mainLine++; mainLine <= _testProject.LastMainMethodDefLine; mainLine++)
-                        {
-                            collapsedLine += " " + lines[mainLine].Trim();
-                        }
                         // overwrite first main line and remove the rest
-                        lines[_testProject.FirstMainMethodDefLine] = collapsedLine;
-                        int mainSignLineLength = _testProject.LastMainMethodDefLine - _testProject.FirstMainMethodDefLine;
-                        lines.RemoveRange(_testProject.FirstMainMethodDefLine+1, mainSignLineLength);
+                        int mainLinesLength = _testProject.LastMainMethodDefLine + 1 - _testProject.FirstMainMethodDefLine;
+                        lines[_testProject.FirstMainMethodDefLine] = string.Join(' ',
+                               lines.Skip(_testProject.FirstMainMethodDefLine)
+                               .Take(mainLinesLength)
+                               .Select((s, i) => i == 0 ? s.TrimEnd() : s.Trim()));
+                        lines.RemoveRange(_testProject.FirstMainMethodDefLine+1, mainLinesLength - 1);
                         rewritten = true;
                         // nothing else should be done with this file as indexes are now broken
                     }
