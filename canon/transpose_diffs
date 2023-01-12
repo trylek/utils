@@ -1,0 +1,167 @@
+#!/bin/bash
+
+#
+# Helper script to transpose output from canon.py (where asm stage is top-level directory
+# and base/diff is leaf directory) to facilitate comparisons by directory-centric diff
+# tools (thus base/diff is top-level directory in output).
+#
+# Only the .asm files are copied -- the .d files are used to prefix lines in asm files
+# containing uninteresting diffs with a sentinel back-tick character, so that diff tools
+# can easily filter these out.
+#
+
+[[ ${VERBOSE:-0} -ne 1 ]] || set -x
+
+set -euo pipefail
+trap '>&2 echo "Error at line $LINENO (process exited with code $?)"' ERR
+
+print_usage_and_exit()
+{
+    exit_code=$1
+    shift
+    echo "$@"
+    echo "Usage: ${BASH_SOURCE[0]} [options]"
+    echo "Options:"
+    echo "  -i input_dir:   input directory (output of canon.py)"
+    echo "  -o output_dir:  output directory"
+    echo "  -b base_tag:    name of subdirectory with base inputs (defaults to 'base')"
+    echo "                  must match --compare-base-name of canon.py"
+    echo "  -d diff_tag:    name of subdirectory with diff inputs (defaults to 'diff')"
+    echo "                  must match --compare-diff-name of canon.py"
+    echo "  -h              print this help message"
+    exit $exit_code
+}
+
+input_dir=
+output_dir=
+base_tag=base
+diff_tag=diff
+
+while getopts b:d:hi:o: opt; do
+  case $opt in
+    b ) base_tag="$OPTARG" ;;
+    d ) diff_tag="$OPTARG" ;;
+    h ) print_usage_and_exit 0 ;;
+    i ) input_dir="$OPTARG" ;;
+    o ) output_dir="$OPTARG" ;;
+    \? ) print_usage_and_exit 1 ;;
+  esac
+done
+
+shift $(($OPTIND - 1))
+
+[[ -n $input_dir && -n $output_dir ]] || print_usage_and_exit 1 "input_dir and output_dir required"
+
+#
+# Normalize to absolute paths
+#
+input_dir=$(realpath -m $input_dir)
+output_dir=$(realpath -m $output_dir)
+
+[[ -d $input_dir ]] || print_usage_and_exit 1 "input_dir $input_dir does not exist!"
+
+#
+# Helper function to copy a file, prefixing unimportant lines with back-tick and
+# important lines with space.
+#
+# The lone argument is path/name of file to copy.
+#
+# stdin should be the numbers of the important lines -- each line of stdin
+# can be a single number (indicating that line is important), or a pair of
+# numbers separated by a comma (indicating lines in that inclusive range are
+# important).  Line numbers referenced in stdin must be in increasing order.
+#
+# Copying stops when either the input file is exhausted or the last important
+# range is processed, whichever is first -- caller appends a dummy entry with
+# very large line number to stdin to make sure input file gets exhausted first.
+#
+# The copy is written to stdout.
+#
+function transcribe() {
+    input_file=$1
+    line_counter=1
+
+    #
+    # Read number or comma-separated pair of numbers from next line of stdin.
+    #
+    while IFS=, read begin end; do
+        if [[ -z $end ]]; then
+            #
+            # Singleton range
+            #
+            end=$begin
+        fi
+
+        #
+        # Lines are uninteresting until we hit the new range.
+        #
+        prefix='`'
+        while [[ $line_counter -le $end ]]; do
+            if [[ $line_counter -eq $begin ]]; then
+              prefix=' '
+            fi
+
+            #
+            # Read next line from input file (using fd 9) and output with prefix.
+            #
+            if IFS= read -r -u9 line; then
+              printf '%s%s\n' "$prefix" "$line"
+              line_counter=$(( $line_counter + 1 ))
+            else
+              break
+            fi
+        done
+    #
+    # Start while loop with input file open on fd 9.
+    #
+    done 9< $input_file
+}
+
+#
+# Clean output directory.
+#
+rm -rf $output_dir
+mkdir -p $output_dir
+
+#
+# Enumerate diffs in input directory.
+#
+cd $input_dir
+for d_file in $(find . -name '*.d' |sed -e 's#^./##'); do
+    #
+    # Compute directory/file names.
+    #
+    file_basename=$(basename $d_file .d)
+    asm_filename=$file_basename.asm
+    relative_input_diff_dir=$(dirname $d_file)
+    [[ $(basename $relative_input_diff_dir) == $diff_tag ]] || \
+      print_usage_and_exit 1 "diff_tag '$diff_tag' does not seem to match input ($file_basename.d found in directory $relative_input_diff_dir)"
+    relative_dir=$(dirname $relative_input_diff_dir)
+    relative_input_base_dir=$relative_dir/$base_tag
+    output_base_dir=$output_dir/$base_tag/$relative_dir
+    output_diff_dir=$output_dir/$diff_tag/$relative_dir
+    input_asm_base_file=$input_dir/$relative_input_base_dir/$asm_filename
+    input_asm_diff_file=$input_dir/$relative_input_diff_dir/$asm_filename
+    output_asm_base_file=$output_base_dir/$asm_filename
+    output_asm_diff_file=$output_diff_dir/$asm_filename
+
+    #
+    # Make sure output directories exist.
+    #
+    mkdir -p $output_base_dir
+    mkdir -p $output_diff_dir
+
+    #
+    # Transcribe base file -- important lines are marked as 'add' or 'change'
+    # in .d file.
+    #
+    sed -n 's/^.\+[ac]//p' <(cat $d_file <(echo 0a1000000)) | \
+        transcribe $input_asm_base_file > $output_asm_base_file
+
+    #
+    # Transcribe diff file -- important lines are marked as 'delete' or 'change'
+    # in .d file.
+    #
+    sed -n 's/[dc].\+//p' <(cat $d_file <(echo 1000000d0)) | \
+        transcribe $input_asm_diff_file > $output_asm_diff_file
+done
