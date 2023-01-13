@@ -2132,6 +2132,12 @@ namespace ILTransform
                     .SelectMany(d => d) // Flatten dictionaries
                     .ToList();
 
+            if (projectGroups.Count == 0)
+            {
+                // No collision so nothing to do
+                return;
+            }
+
             List<(string, TestProject)> representativeProjects =
                 projectGroups
                     .Select(kvp => (kvp.Key, kvp.Value[0])) // Pair key with representative value
