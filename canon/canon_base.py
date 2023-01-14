@@ -145,6 +145,14 @@ def get_base_parser():
         action="store_const",
         const="x64",
     )
+    kind_group.add_argument(
+        "-y",
+        "--jitx64",
+        help="Canonicalize JIT X64 assembly files",
+        dest="kind",
+        action="store_const",
+        const="jitx64",
+    )
 
     config_group = cmd_parser.add_argument_group(title="configuration arguments")
     config_group.add_argument(
@@ -848,5 +856,44 @@ class X64Parser(Parser):
         return not line or self.func_def.match(line) is not None
 
 
+class JITX64Parser(Parser):
+    def default_filespec(self):
+        return "*.dasm"
+
+    def is_debug_info(self, line):
+        return False
+
+    def is_reference(self, line):
+        return False
+
+    def replace_fntable(self, line):
+        return line
+
+    def replace_line(self, line):
+        return line
+
+    rbp_offset = re.compile(r"([rsp|rbp])([\+\-])[0-9A-F]+H")
+    comment = re.compile("\s*;.*$")
+
+    def canon_line(self, line):
+        # possible future improvement: remove distracting numbers?
+        line = self.comment.sub(r"", line)
+        line = self.rbp_offset.sub(r"\1\2[[N]]", line)
+        return line
+
+    func_def = re.compile(r"^; Assembly listing for method (.*)$")
+    invalid_chars = "():<>+"
+
+    def func_start(self, line):
+        func_match = self.func_def.match(line)
+        return ''.join(['_' if c in self.invalid_chars else c for c in func_match.group(1)]) if func_match else None
+
+    def func_end(self, line):
+        return line.startswith("; Total bytes of code")
+
+    def func_already_ended(self, line):
+        return False
+
+
 def parser_map():
-    return {"llvm": LlvmParser, "arm": ArmParser, "x64": X64Parser}
+    return {"llvm": LlvmParser, "arm": ArmParser, "x64": X64Parser, "jitx64": JITX64Parser}

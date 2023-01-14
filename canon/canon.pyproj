@@ -30,6 +30,7 @@
     <Compile Include="canon_util.py" />
     <Compile Include="samples\arm_dll.py" />
     <Compile Include="samples\blanks.py" />
+    <Compile Include="samples\jit.py" />
     <Compile Include="samples\llvm_dll.py" />
     <Compile Include="samples\ntum.py" />
     <Compile Include="samples\voltable.py" />
