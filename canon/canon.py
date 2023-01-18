@@ -1630,6 +1630,8 @@ directive_map = {
     "g": {"prefix": r", !dbg !", "content": r"\d+", "numeric": r"%d"},
     # Register
     "r": {"content": r"[wxrq](?:\d+|zr)"},  # registers
+    # X64 Register
+    "xr": {"content": r"[er](?:[abcd]x|si|di)"},  # incomplete
     # Vector type elements
     "V": {"content": r"i\d+|float|double"},
     # ARM64 memory operand offset ", #123" in "[reg, #123]"

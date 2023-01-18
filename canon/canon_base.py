@@ -874,11 +874,13 @@ class JITX64Parser(Parser):
 
     rbp_offset = re.compile(r"([rsp|rbp])([\+\-])[0-9A-F]+H")
     comment = re.compile("\s*;.*$")
+    IG = re.compile(r"G_M\d+_IG\d+")
 
     def canon_line(self, line):
         # possible future improvement: remove distracting numbers?
-        line = self.comment.sub(r"", line)
         line = self.rbp_offset.sub(r"\1\2[[N]]", line)
+        line = self.comment.sub(r"", line)
+        line = self.IG.sub(r"G_M[[N]]_IG[[N]]", line)
         return line
 
     func_def = re.compile(r"^; Assembly listing for method (.*)$")
