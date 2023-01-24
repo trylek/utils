@@ -1857,9 +1857,6 @@ namespace ILTransform
                     sourceInfo.NamespaceLine = index;
                 }
             }
-
-            // IL projects don't actually need the Fact attribute providing they have a Main method
-            sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodDefLine >= 0);
         }
 
         private static void AnalyzeILSourceForTypeNames(string path, List<string> lines, ref SourceInfo sourceInfo)
