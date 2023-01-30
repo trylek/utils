@@ -31,6 +31,7 @@ class ConfigBase:
 
         self.output_dir = cmd_args.output_dir
 
+        self.opt_only = cmd_args.opt_only
         self.filespecs = list(itertools.chain(*cmd_args.filespecs))
         self.exclude_filespecs = list(itertools.chain(*cmd_args.exclude_filespecs))
         self.funcspecs = [re.compile(s) for s in itertools.chain(*cmd_args.funcspecs)]
@@ -171,7 +172,13 @@ def get_base_parser():
     )
 
     filter_group = cmd_parser.add_argument_group(
-        title="Limit the amount of diffing arguments"
+        title="Filtering arguments"
+    )
+    filter_group.add_argument(
+        "--opt-only",
+        help="Include only optimized functions (if such filtering is supported for the file type)",
+        action="store_true",
+        default=False,
     )
     filter_group.add_argument(
         "-F",
@@ -564,6 +571,11 @@ class Parser(ABC):
     def func_start(self, line):
         pass
 
+    # Returns whether the current line indicates that the entire function should be skipped.
+    @abstractmethod
+    def func_unopt_from_line(self, line):
+        pass
+
     # Determines whether the line represents the end of a function.
     @abstractmethod
     def func_end(self, line):
@@ -602,7 +614,8 @@ class Parser(ABC):
         # func: Function
         # last_blank: bool = True
 
-        def __init__(self, func, last_blank=True):
+        def __init__(self, func_name, func, last_blank=True):
+            self.func_name = func_name
             self.func = func
             self.last_blank = last_blank
 
@@ -625,9 +638,10 @@ class Parser(ABC):
         current = []  # stack (currently only 0-2 elements)
 
         if include_outside:
+            outside_name = "___" + file_label
             outside = new_Function()
-            funcs["___" + file_label] = outside
-            current.append(Parser.Item(func=outside))
+            funcs[outside_name] = outside
+            current.append(Parser.Item(func_name=outside_name, func=outside))
 
         outside_is_trash = not include_outside
         in_func = False
@@ -676,7 +690,16 @@ class Parser(ABC):
                                     func.lines.append("\n")
                                 else:
                                     funcs[func_start_name] = func = new_Function()
-                                current.append(Parser.Item(func=func))
+                                current.append(Parser.Item(func_name=func_start_name, func=func))
+
+                if not in_trash:
+                    with stats.timers[TimeKind.AddFunc]:
+                        if in_func and not in_trash and self.config.opt_only and self.func_unopt_from_line(filtered_line):
+                            # Need to undo the above AddFunc (not in_trash) code
+                            in_trash = True
+                            stats.incr(CounterKind.EarlyCount, -1) # hack
+                            del funcs[current[-1].func_name]
+                            current.pop()
 
                 if not in_trash:
                     # "" (shouldn't happen) or "\n"
@@ -752,6 +775,9 @@ class LlvmParser(Parser):
         func_match = self.func_def.match(line)  # 'match' means at start of line
         return func_match.group(1) if func_match else None
 
+    def func_unopt_from_line(self, line):
+        return False
+
     def func_end(self, line):
         return line[0] == "}"  # ugh, this is faster.  All lines should have \n.
         # return line.startswith("}")
@@ -808,6 +834,9 @@ class ArmParser(Parser):
         func_match = self.func_def.search(line)  # 'search' means anywhere in line
         return func_match.group(1) if func_match else None
 
+    def func_unopt_from_line(self, line):
+        return False
+
     def func_end(self, line):
         return "// -- End function" in line
 
@@ -849,6 +878,9 @@ class X64Parser(Parser):
         func_match = self.func_def.match(line)
         return func_match.group(1) if func_match else None
 
+    def func_unopt_from_line(self, line):
+        return False
+
     def func_end(self, line):
         return False
 
@@ -889,6 +921,9 @@ class JITX64Parser(Parser):
     def func_start(self, line):
         func_match = self.func_def.match(line)
         return ''.join(['_' if c in self.invalid_chars else c for c in func_match.group(1)]) if func_match else None
+
+    def func_unopt_from_line(self, line):
+        return line.startswith("; MinOpts code")
 
     def func_end(self, line):
         return line.startswith("; Total bytes of code")
