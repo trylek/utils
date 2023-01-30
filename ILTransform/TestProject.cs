@@ -201,7 +201,7 @@ namespace ILTransform
             return char.IsDigit(c) || char.IsLetter(c) || c == '_' || c == '@' || c == '$' || c == '`';
         }
 
-        private static Regex PublicRegex = new Regex(@"public\s+");
+        private static Regex PublicRegex = new Regex(@"(\s|^)public(\s|$)");
         private static Regex NotPublicRegex = new Regex(@"(?:private|internal)(?<ws>\s+)");
 
         // Side effect: Changes private/internal to public in 'line'
@@ -223,15 +223,17 @@ namespace ILTransform
             if (force)
             {
                 int charIndex = line.SkipWhiteSpace();
+                string preffix = line[..charIndex];
                 if (isILTest)
                 {
+                    // They always start like .method or .class but might end without spaces
                     charIndex = line.SkipNonWhiteSpace(charIndex);
-                    if (charIndex < line.Length)
-                    {
-                        charIndex++;
-                    }
+                    line = line.Insert(charIndex, " public");
                 }
-                line = string.Concat(line.AsSpan(0, charIndex), "public ", line.AsSpan(charIndex));
+                else
+                {
+                    line = line.Insert(charIndex, "public ");
+                }
                 return true;
             }
 
@@ -1855,9 +1857,6 @@ namespace ILTransform
                     sourceInfo.NamespaceLine = index;
                 }
             }
-
-            // IL projects don't actually need the Fact attribute providing they have a Main method
-            sourceInfo.HasFactAttribute = (sourceInfo.FirstMainMethodDefLine >= 0);
         }
 
         private static void AnalyzeILSourceForTypeNames(string path, List<string> lines, ref SourceInfo sourceInfo)
@@ -2129,6 +2128,12 @@ namespace ILTransform
                     .Where(map => map.Count > 1) // Find conflicts
                     .SelectMany(d => d) // Flatten dictionaries
                     .ToList();
+
+            if (projectGroups.Count == 0)
+            {
+                // No collision so nothing to do
+                return;
+            }
 
             List<(string, TestProject)> representativeProjects =
                 projectGroups
