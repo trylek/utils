@@ -237,7 +237,12 @@ namespace ILTransform
                 {
                     if (isILTest)
                     {
-                        string classLine = $".class public auto ansi Test_{Path.GetFileNameWithoutExtension(source)} extends [mscorlib] System.Object {{";
+                        string testClass = Path.GetFileNameWithoutExtension(source);
+                        if (!Char.IsLetter(testClass[0]))
+                        {
+                            testClass = "Test_" + testClass;
+                        }
+                        string classLine = $".class public auto ansi {testClass} {{";
                         lines.Insert(_testProject.FirstMainMethodDefLine, classLine);
 
                         // There's a significant problem with inserted lines throwing off the precomputed lines.
