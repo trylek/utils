@@ -223,7 +223,6 @@ namespace ILTransform
             if (force)
             {
                 int charIndex = line.SkipWhiteSpace();
-                string preffix = line[..charIndex];
                 if (isILTest)
                 {
                     // They always start like .method or .class but might end without spaces
