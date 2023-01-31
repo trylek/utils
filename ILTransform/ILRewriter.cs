@@ -237,12 +237,8 @@ namespace ILTransform
                 {
                     if (isILTest)
                     {
-                        string testClass = Path.GetFileNameWithoutExtension(source);
-                        if (!char.IsLetter(testClass[0]))
-                        {
-                            testClass = "Test_" + testClass;
-                        }
-                        else if (IL.SpecialTokens().Contains(testClass))
+                        string testClass = TestProject.SanitizeIdentifier(Path.GetFileNameWithoutExtension(source), isILTest);
+                        if (IL.SpecialTokens().Contains(testClass))
                         {
                             testClass = "_" + testClass;
                         }
