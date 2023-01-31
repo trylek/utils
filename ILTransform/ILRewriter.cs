@@ -677,7 +677,7 @@ namespace ILTransform
             }
         }
 
-        private enum IdentKind
+        public enum IdentKind
         {
             Namespace,
             TypeUse,
@@ -695,25 +695,25 @@ namespace ILTransform
             Other
         }
 
-        private bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
             && kinds[0] == TokenKind.Other && tokens[0] == "."
             && (kinds[1] == TokenKind.Identifier || kinds[1] == TokenKind.SingleQuoted) && tokens[1] == "namespace"
             && kinds[2] == TokenKind.WhiteSpace;
 
-        private bool IsNamespacePrefix(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsNamespacePrefix(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 2 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "."
             && (kinds[index + 2] == TokenKind.Identifier || kinds[index + 2] == TokenKind.SingleQuoted);
 
-        private bool IsTypePrefix(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsTypePrefix(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 2 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other
             && ((tokens[index + 1] == "::") || (tokens[index + 1] == "/")) // type::field or type::nestedtype
             && (kinds[index + 2] == TokenKind.Identifier || kinds[index + 2] == TokenKind.SingleQuoted);
 
         private static string[] TypeDefTokens = { "public", "auto", "ansi" };
-        private bool IsTypeNameDef(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsTypeNameDef(List<string> tokens, List<TokenKind> kinds, int index)
         {
             for (; index >= 2; index -= 2)
             {
@@ -725,25 +725,25 @@ namespace ILTransform
             return false;
         }
 
-        private bool IsTypeNameUse(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsTypeNameUse(List<string> tokens, List<TokenKind> kinds, int index)
             => (index >= 2)
             && (kinds[index - 2] == TokenKind.Identifier || kinds[index - 2] == TokenKind.SingleQuoted)
             && (tokens[index - 2] == "class" || tokens[index - 2] == "valuetype")
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
-        private bool IsMethodName(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsMethodName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index + 1 < tokens.Count)
             && kinds[index + 1] == TokenKind.Other && tokens[index + 1] == "(";
 
         private static string[] TypeOperators = { "ldtoken", "box", "initobj", "ldobj", "stobj", "cpobj", "isinst", "castclass", "catch", "sizeof", "ldelema", "newarr" };
-        private bool IsOperatorType(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsOperatorType(List<string> tokens, List<TokenKind> kinds, int index)
             => !IsNamespacePrefix(tokens, kinds, index)
             && (index >= 2)
             && (kinds[index - 2] == TokenKind.Identifier || kinds[index - 2] == TokenKind.SingleQuoted)
             && TypeOperators.Contains(tokens[index - 2])
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
-        private bool IsInheritanceType(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsInheritanceType(List<string> tokens, List<TokenKind> kinds, int index)
         {
             while (--index >= 0)
             {
@@ -764,12 +764,12 @@ namespace ILTransform
             return false;
         }
 
-        private bool IsVariableName(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsVariableName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index >= 2)
             && kinds[index - 2] == TokenKind.Identifier && tokens[index - 2] == "int"
             && kinds[index - 1] == TokenKind.WhiteSpace;
 
-        private List<(string, TokenKind)> SpecialTokens = new List<(string, TokenKind)>()
+        private static List<(string, TokenKind)> SpecialTokens = new List<(string, TokenKind)>()
         {
             (".class", TokenKind.Identifier),
             (".ctor", TokenKind.Identifier),
@@ -778,7 +778,10 @@ namespace ILTransform
             (")", TokenKind.Other),
         };
 
-        private string ReplaceIdent(string source, string searchIdent, string replaceIdent, bool isIL, IdentKind searchKind = IdentKind.Other)
+        public string ReplaceIdent(string source, string searchIdent, string replaceIdent, bool isIL, IdentKind searchKind = IdentKind.Other)
+            => ReplaceIdent(_testProject.AbsolutePath, source, searchIdent, replaceIdent, isIL, searchKind);
+
+        public static string ReplaceIdent(string pathForErrors, string source, string searchIdent, string replaceIdent, bool isIL, IdentKind searchKind = IdentKind.Other)
         {
             if (!source.Contains(searchIdent))
             {
@@ -882,14 +885,24 @@ namespace ILTransform
                         else
                         {
                             Console.WriteLine("{0}: Checking for namespace: couldn't determine token kind of token #{1}={2} in",
-                                _testProject.AbsolutePath, i, token);
+                                pathForErrors, i, token);
                             Console.WriteLine(source);
                             replace = false;
                         }
                     }
                     else if (searchKind == IdentKind.TypeUse)
                     {
-                        if (IsTypePrefix(tokens, kinds, i)
+                        // Checking for a namespace prefix (N.X) needs to happen first because it is
+                        // a strong indicator that it is not a type and a check like IsTypeNameUse
+                        // ("class X") can get confused by class N.X.
+                        //
+                        // Better would be to properly collect the fully qualified type name after
+                        // "class", but hopefully that is beyond the scope of this tool.
+                        if (IsNamespacePrefix(tokens, kinds, i))
+                        {
+                            replace = false;
+                        }
+                        else if (IsTypePrefix(tokens, kinds, i)
                             || IsTypeNameUse(tokens, kinds, i)
                             || IsInheritanceType(tokens, kinds, i)
                             || IsOperatorType(tokens, kinds, i))
@@ -897,7 +910,6 @@ namespace ILTransform
                             // good
                         }
                         else if (IsNamespaceDeclName(tokens, kinds, i)
-                            || IsNamespacePrefix(tokens, kinds, i)
                             || IsMethodName(tokens, kinds, i)
                             || IsTypeNameDef(tokens, kinds, i)
                             || IsVariableName(tokens, kinds, i))
@@ -907,7 +919,7 @@ namespace ILTransform
                         else
                         {
                             Console.WriteLine("{0}: Checking for type: couldn't determine token kind of token #{1}={2} in",
-                                _testProject.AbsolutePath, i, token);
+                                pathForErrors, i, token);
                             Console.WriteLine(source);
                             replace = false;
                         }
