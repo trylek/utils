@@ -133,7 +133,7 @@ namespace ILTransform
                             else
                             {
                                 lines[_testProject.MainTokenMethodLine] =
-                                    ReplaceIdent(lines[_testProject.MainTokenMethodLine], "Main", "TestEntryPoint");
+                                    ReplaceIdent(lines[_testProject.MainTokenMethodLine], "Main", "TestEntryPoint", isIL: isILTest);
                                 lineIndex = InsertIndentedLines(lines, lineIndex, s_csFactLines, firstMainBodyLine);
                             }
                             _testProject.AddedFactAttribute = true;
@@ -381,7 +381,7 @@ namespace ILTransform
                             {
                                 if (s != i)
                                 {
-                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, IdentKind.TypeUse);
+                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, isIL: isILTest, IdentKind.TypeUse);
                                 }
                             }
                         }
@@ -397,6 +397,7 @@ namespace ILTransform
                                 lines[lineIndex],
                                 _testProject.MainClassNamespace,
                                 _testProject.DeduplicatedNamespaceName,
+                                isIL: isILTest,
                                 IdentKind.Namespace);
                         }
                     }
@@ -537,7 +538,7 @@ namespace ILTransform
                             }
                             else
                             {
-                                while (charIndex < line.Length && TestProject.IsIdentifier(line[charIndex]))
+                                while (charIndex < line.Length && TestProject.IsIdentifier(line[charIndex], isIL: true))
                                 {
                                     charIndex++;
                                 }
@@ -777,7 +778,7 @@ namespace ILTransform
             (")", TokenKind.Other),
         };
 
-        private string ReplaceIdent(string source, string searchIdent, string replaceIdent, IdentKind searchKind = IdentKind.Other)
+        private string ReplaceIdent(string source, string searchIdent, string replaceIdent, bool isIL, IdentKind searchKind = IdentKind.Other)
         {
             if (!source.Contains(searchIdent))
             {
@@ -832,10 +833,10 @@ namespace ILTransform
 
                 if (next == index)
                 {
-                    if (!TestProject.IsIdentifier(c))
+                    if (!TestProject.IsIdentifier(c, isIL: isIL))
                     {
                         while (++next < source.Length
-                            && !TestProject.IsIdentifier(source[next])
+                            && !TestProject.IsIdentifier(source[next], isIL: isIL)
                             && (source[next] != '\'')
                             && !char.IsWhiteSpace(source[next]))
                         {
@@ -845,7 +846,7 @@ namespace ILTransform
                     }
                     else
                     {
-                        while (++next < source.Length && TestProject.IsIdentifier(source[next]))
+                        while (++next < source.Length && TestProject.IsIdentifier(source[next], isIL: isIL))
                         {
                             // nothing
                         }

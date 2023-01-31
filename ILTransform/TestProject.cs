@@ -196,10 +196,8 @@ namespace ILTransform
 
         public bool NeedsRequiresProcessIsolation => RequiresProcessIsolationReasons.Length > 0;
 
-        public static bool IsIdentifier(char c)
-        {
-            return char.IsDigit(c) || char.IsLetter(c) || c == '_' || c == '@' || c == '$' || c == '`';
-        }
+        public static bool IsIdentifier(char c, bool isIL)
+            => char.IsDigit(c) || char.IsLetter(c) || c == '_' || (isIL && (c == '@' || c == '$' || c == '`'));
 
         private static Regex PublicRegex = new Regex(@"(\s|^)public(\s|$)");
         private static Regex NotPublicRegex = new Regex(@"(?:private|internal)(?<ws>\s+)");
@@ -239,13 +237,13 @@ namespace ILTransform
             return false;
         }
 
-        public static string SanitizeIdentifier(string source)
+        public static string SanitizeIdentifier(string source, bool isIL)
         {
             StringBuilder output = new StringBuilder();
             for (int i = 0; i < source.Length; i++)
             {
                 char c = source[i];
-                if (IsIdentifier(c))
+                if (IsIdentifier(c, isIL: isIL))
                 {
                     if (char.IsDigit(c) && output.Length == 0)
                     {
@@ -281,7 +279,7 @@ namespace ILTransform
             return string.Concat(line.AsSpan(0, indentIndex), add, line.AsSpan(indentIndex));
         }
 
-        public static string ReplaceIdentifier(string line, string originalIdent, string targetIdent)
+        public static string ReplaceIdentifier(string line, string originalIdent, string targetIdent, bool isIL)
         {
             int startIndex = 0;
             while (startIndex < line.Length)
@@ -292,8 +290,8 @@ namespace ILTransform
                     break;
                 }
                 int endIndex = index + originalIdent.Length;
-                if ((index == 0 || !IsIdentifier(line[index - 1]))
-                    && (endIndex >= line.Length || !IsIdentifier(line[endIndex])))
+                if ((index == 0 || !IsIdentifier(line[index - 1], isIL: isIL))
+                    && (endIndex >= line.Length || !IsIdentifier(line[endIndex], isIL: isIL)))
                 {
                     line = string.Concat(line.AsSpan(0, index), targetIdent, line.AsSpan(endIndex));
                     startIndex = index + targetIdent.Length;
@@ -364,10 +362,10 @@ namespace ILTransform
                     typeName = line.Substring(identStart, scanIndex - identStart);
                     return true;
                 }
-                if (IsIdentifier(line[scanIndex]))
+                if (IsIdentifier(line[scanIndex], isIL: true))
                 {
                     int identStart = scanIndex;
-                    while (++scanIndex < line.Length && (IsIdentifier(line[scanIndex]) || (line[scanIndex] == '.')))
+                    while (++scanIndex < line.Length && (IsIdentifier(line[scanIndex], isIL: true) || (line[scanIndex] == '.')))
                     {
                     }
                     typeName = line.Substring(identStart, scanIndex - identStart);
@@ -1664,7 +1662,7 @@ namespace ILTransform
                                             continue;
                                         }
                                         int baseIdentBegin = basePos;
-                                        while (basePos < line.Length && TestProject.IsIdentifier(line[basePos]))
+                                        while (basePos < line.Length && TestProject.IsIdentifier(line[basePos], isIL: false))
                                         {
                                             basePos++;
                                         }
@@ -1793,7 +1791,7 @@ namespace ILTransform
 
             typeNameStart = line.SkipWhiteSpace(typeNameStart);
             int searchTypeNameEnd = typeNameStart;
-            while (searchTypeNameEnd < line.Length && TestProject.IsIdentifier(line[searchTypeNameEnd]))
+            while (searchTypeNameEnd < line.Length && TestProject.IsIdentifier(line[searchTypeNameEnd], isIL: false))
             {
                 searchTypeNameEnd++;
             }
@@ -1822,7 +1820,7 @@ namespace ILTransform
             }
 
             int namespaceNameEnd = namespaceNameStart;
-            while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd]))
+            while (namespaceNameEnd < line.Length && TestProject.IsIdentifier(line[namespaceNameEnd], isIL: false))
             {
                 namespaceNameEnd++;
             }
@@ -2182,7 +2180,7 @@ namespace ILTransform
 
             foreach ((TestProject project, string newNamespace) in representativeProjects.Select(p => p.Item2).Zip(bestAttempt))
             {
-                project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(InterestingNamespace(project) + newNamespace);
+                project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(InterestingNamespace(project) + newNamespace, isIL: project.IsILProject);
             }
 
             // Propagate DeduplicatedNamespaceName to the other projects with the same root

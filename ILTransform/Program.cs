@@ -40,7 +40,7 @@ namespace ILTransform
                         {
                             settings.DeduplicateClassNames = true;
                             int index = 2;
-                            while (index < arg.Length && !TestProject.IsIdentifier(arg[index]))
+                            while (index < arg.Length && !TestProject.IsIdentifier(arg[index], isIL: true))
                             {
                                 index++;
                             }
