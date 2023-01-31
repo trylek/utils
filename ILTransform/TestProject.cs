@@ -534,6 +534,7 @@ namespace ILTransform
     public class TestProjectStore
     {
         private readonly List<TestProject> _projects;
+        private readonly List<TestProject> _projects_to_update_ilfiles;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _classNameDbgOptMap;
         private readonly HashSet<string> _rewrittenFiles;
@@ -542,6 +543,7 @@ namespace ILTransform
         public TestProjectStore()
         {
             _projects = new List<TestProject>();
+            _projects_to_update_ilfiles = new List<TestProject>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _classNameDbgOptMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _rewrittenFiles = new HashSet<string>();
@@ -1161,54 +1163,71 @@ namespace ILTransform
 
                         project.NewAbsolutePath = newProjectPath;
                         Utils.FileMove(project.AbsolutePath, newProjectPath, overwrite: false);
+                        if (project.CompileFilesIncludeProjectName)
+                        {
+                            _projects_to_update_ilfiles.Add(project);
+                        }
                     }
                 }
             }
         }
 
-        // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
+        // Update IL filenames for each compile il using project name (as "$(MSBuildProjectName)")
+        public void FixILFilesWithProjectNames()
+        {
+            foreach (TestProject testProject in _projects_to_update_ilfiles)
+            {
+                FixILFileName(testProject);
+            }
+        }
+
         public void FixILFileNames()
         {
             foreach (TestProject testProject in _projects)
             {
-                if (!testProject.IsILProject) continue;
-                if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) continue;
-
-                string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
-
-                string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
-                string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
-                string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
-
-                TestProject.GetKeyNameRootNameAndSuffix(
-                    testProject.NewAbsolutePath ?? testProject.AbsolutePath,
-                    out _,
-                    out string projectRootName,
-                    out _);
-                string newSourceFile = string.Concat(dir, Path.DirectorySeparatorChar, projectRootName, extension);
-
-                if (rootName != projectRootName)
-                {
-                    if (_movedFiles.TryAdd(testProject.MainClassSourceFile, newSourceFile))
-                    {
-                        Utils.FileMove(testProject.MainClassSourceFile, newSourceFile);
-                    }
-                    else
-                    {
-                        // Already moved this file. Check that the targets match.
-                        string prevCopy = _movedFiles[testProject.MainClassSourceFile];
-                        if (newSourceFile != prevCopy)
-                        {
-                            Console.WriteLine($"Conflict in moving {testProject.MainClassSourceFile}");
-                            Console.WriteLine($"to {newSourceFile}");
-                            Console.WriteLine($"and {prevCopy}");
-                        }
-                    }
-                    testProject.NewTestClassSourceFile = newSourceFile;
-                    testProject.CompileFiles[0] = newSourceFile;
-                }
+                FixILFileName(testProject);
             }
+        }
+        
+        // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
+        private void FixILFileName(TestProject testProject)
+        {
+            if (!testProject.IsILProject) return;
+            if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) return;
 
+            string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
+
+            string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
+            string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
+            string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
+
+            TestProject.GetKeyNameRootNameAndSuffix(
+                testProject.NewAbsolutePath ?? testProject.AbsolutePath,
+                out _,
+                out string projectRootName,
+                out _);
+            string newSourceFile = string.Concat(dir, Path.DirectorySeparatorChar, projectRootName, extension);
+
+            if (rootName != projectRootName)
+            {
+                if (_movedFiles.TryAdd(testProject.MainClassSourceFile, newSourceFile))
+                {
+                    Utils.FileMove(testProject.MainClassSourceFile, newSourceFile);
+                }
+                else
+                {
+                    // Already moved this file. Check that the targets match.
+                    string prevCopy = _movedFiles[testProject.MainClassSourceFile];
+                    if (newSourceFile != prevCopy)
+                    {
+                        Console.WriteLine($"Conflict in moving {testProject.MainClassSourceFile}");
+                        Console.WriteLine($"to {newSourceFile}");
+                        Console.WriteLine($"and {prevCopy}");
+                    }
+                }
+                testProject.NewTestClassSourceFile = newSourceFile;
+                testProject.CompileFiles[0] = newSourceFile;
+            }
         }
 
         // Side effects: Creates cs/csproj files
