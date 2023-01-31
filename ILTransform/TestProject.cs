@@ -237,9 +237,15 @@ namespace ILTransform
             return false;
         }
 
+        public static List<string> SpecialTokens() => new List<string> {
+            "add", "and", "br", "brtrue", "brfalse", "ble", "blt", "beq",    "bge", "bgt", "call", "ceq", "cgt", "ckfinite", "clt", "cpblk", "div",
+            "dup", "initblk", "jmp", "ldobj", "ldtoken", "mul", "neg", "nop", "rem", "ret", "sub", "xor", "callvirt",
+            "castclass", "cpobj", "initobj", "isinst", "switch"
+        };
+
         public static bool IsSpecialToken(string input)
         {
-            return IL.SpecialTokens().Contains(input);
+            return SpecialTokens().Contains(input);
         }
 
         public static string SanitizeIdentifier(string source, bool isIL)
