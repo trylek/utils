@@ -242,6 +242,10 @@ namespace ILTransform
                         {
                             testClass = "Test_" + testClass;
                         }
+                        else if (IL.SpecialTokens().Contains(testClass))
+                        {
+                            testClass = "_" + testClass;
+                        }
                         string classLine = $".class public auto ansi {testClass} {{";
                         lines.Insert(_testProject.FirstMainMethodDefLine, classLine);
 
