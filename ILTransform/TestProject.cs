@@ -237,6 +237,17 @@ namespace ILTransform
             return false;
         }
 
+        static List<string> specialTokens = new List<string> {
+            "add", "and", "ceq", "cgt", "ckfinite", "clt", "div",
+            "dup", "mul", "neg", "rem", "sub", "xor", "callvirt",
+            "castclass", "cpobj", "initobj", "isinst", "ldobj"
+        };
+
+        public static bool IsSpecialToken(string input)
+        {
+            return specialTokens.Contains(input);
+        }
+
         public static string SanitizeIdentifier(string source, bool isIL)
         {
             StringBuilder output = new StringBuilder();
@@ -260,7 +271,12 @@ namespace ILTransform
                     output.Append("__");
                 }
             }
-            return output.ToString();
+            string outputString = output.ToString();
+            if (IsSpecialToken(outputString))
+            {
+                outputString += "_";
+            }
+            return outputString;
         }
 
         public static int GetIndent(string line)
