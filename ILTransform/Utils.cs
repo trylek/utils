@@ -330,6 +330,7 @@ namespace ILTransform
             minLength = values.Select(n => n.Length).Min();
 
             // Strip matching trailing characters - but only at token (by _ or -) boundaries
+
             // Search for trailing matches and mark the points where we hit the start of a token.
             // Allow it to go one past the beginning of the shortest string to handle ["a", "b-a", "c-a"]
             int trailingMatches = 0;
