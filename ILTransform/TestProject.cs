@@ -544,7 +544,6 @@ namespace ILTransform
     public class TestProjectStore
     {
         private readonly List<TestProject> _projects;
-        private readonly List<TestProject> _projects_to_update_ilfiles;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _classNameDbgOptMap;
         private readonly HashSet<string> _rewrittenFiles;
@@ -553,7 +552,6 @@ namespace ILTransform
         public TestProjectStore()
         {
             _projects = new List<TestProject>();
-            _projects_to_update_ilfiles = new List<TestProject>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _classNameDbgOptMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _rewrittenFiles = new HashSet<string>();
@@ -1173,10 +1171,6 @@ namespace ILTransform
 
                         project.NewAbsolutePath = newProjectPath;
                         Utils.FileMove(project.AbsolutePath, newProjectPath, overwrite: false);
-                        if (project.CompileFilesIncludeProjectName)
-                        {
-                            _projects_to_update_ilfiles.Add(project);
-                        }
                     }
                 }
             }
@@ -1185,7 +1179,7 @@ namespace ILTransform
         // Update IL filenames for each compile il using project name (as "$(MSBuildProjectName)")
         public void FixILFilesWithProjectNames()
         {
-            foreach (TestProject testProject in _projects_to_update_ilfiles)
+            foreach (TestProject testProject in _projects.Where(p => p.NewAbsolutePath != null && p.CompileFilesIncludeProjectName))
             {
                 FixILFileName(testProject);
             }

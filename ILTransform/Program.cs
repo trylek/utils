@@ -158,7 +158,7 @@ namespace ILTransform
                 {
                     testStore.FixILFileNames();
                 }
-                else if(settings.DeduplicateProjectNames)
+                else if (settings.DeduplicateProjectNames)
                 {
                     testStore.FixILFilesWithProjectNames();
                 }
