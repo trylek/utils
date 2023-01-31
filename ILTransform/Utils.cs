@@ -9,7 +9,7 @@ using System.Threading.Tasks;
 
 namespace ILTransform
 {
-    internal static class Utils
+    public static class Utils
     {
         internal static int SkipWhiteSpace(this string thisString, int index = 0)
         {
@@ -299,34 +299,49 @@ namespace ILTransform
             return extraRootNameEnum.ToList()!;
         }
 
+        public static bool IsMatchOrOutOfRange(string str1, int index1, string str2, int index2)
+            => index1 < 0 || index1 >= str1.Length || index2 < 0 || index2 >= str2.Length || str1[index1] == str2[index2];
+
         // Reduce ["pre-A-post", pre-B-post"] to ["A", "B"]
-        internal static List<string> TrimSharedTokens(List<string> values)
+        public static List<string> TrimSharedTokens(List<string> values)
         {
-            // Strip matching leading characters - but only at token (by _ or -) boundaries
             int minLength = values.Select(n => n.Length).Min();
+            // Any string longer than 'minLength' (if one exists, else any of them)
+            int repStringIndex = values.FindIndex(n => n.Length > minLength);
+            if (repStringIndex == -1) repStringIndex = 0;
+            string repString = values[repStringIndex];
+
+            // Strip matching leading characters - but only at token (by _ or -) boundaries
+
+            // Search for leading matches and mark the points where we hit the end of a token.
+            // Allow it to go one past the end of the shortest string to handle ["a", "a-b", "a-c"]
             int leadingMatches = 0;
             int leadingTokenMatches = 0;
-            while ((leadingMatches < minLength)
-                && values.All(n => n[leadingMatches] == values[0][leadingMatches]))
+            while ((leadingMatches <= minLength)
+                && values.All(n => IsMatchOrOutOfRange(n, leadingMatches, repString, leadingMatches)))
             {
-                bool isFullToken = new char[] { '_', '-' }.Contains(values[0][leadingMatches]);
+                bool isFullToken = leadingMatches == repString.Length || new char[] { '_', '-' }.Contains(repString[leadingMatches]);
                 leadingMatches++;
                 if (isFullToken) leadingTokenMatches = leadingMatches;
             }
-            values = values.Select(n => n.Substring(leadingTokenMatches)).ToList();
 
-            // Strip matching trailing characters
+            values = values.Select(n => n.Substring(Math.Min(n.Length, leadingTokenMatches))).ToList();
+            repString = values[repStringIndex];
             minLength = values.Select(n => n.Length).Min();
+
+            // Strip matching trailing characters - but only at token (by _ or -) boundaries
+            // Search for trailing matches and mark the points where we hit the start of a token.
+            // Allow it to go one past the beginning of the shortest string to handle ["a", "b-a", "c-a"]
             int trailingMatches = 0;
             int trailingTokenMatches = 0;
-            while ((trailingMatches < minLength)
-                && values.All(n => n[n.Length - trailingMatches - 1] == values[0][values[0].Length - trailingMatches - 1]))
+            while ((trailingMatches <= minLength)
+                && values.All(n => IsMatchOrOutOfRange(n, n.Length - trailingMatches - 1, repString, repString.Length - trailingMatches - 1)))
             {
-                bool isFullToken = new char[] { '_', '-' }.Contains(values[0][leadingMatches]);
+                bool isFullToken = trailingMatches == repString.Length || new char[] { '_', '-' }.Contains(repString[repString.Length - trailingMatches - 1]);
                 trailingMatches++;
                 if (isFullToken) trailingTokenMatches = trailingMatches;
             }
-            values = values.Select(n => n.Substring(0, n.Length - trailingTokenMatches)).ToList();
+            values = values.Select(n => n.Substring(0, Math.Max(0, n.Length - trailingTokenMatches))).ToList();
 
             return values;
         }
