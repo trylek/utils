@@ -238,10 +238,6 @@ namespace ILTransform
                     if (isILTest)
                     {
                         string testClass = TestProject.SanitizeIdentifier(Path.GetFileNameWithoutExtension(source), isILTest);
-                        if (IL.SpecialTokens().Contains(testClass))
-                        {
-                            testClass = "_" + testClass;
-                        }
                         string classLine = $".class public auto ansi {testClass} {{";
                         lines.Insert(_testProject.FirstMainMethodDefLine, classLine);
 
