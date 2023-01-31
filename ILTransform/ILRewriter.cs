@@ -696,7 +696,7 @@ namespace ILTransform
             Other
         }
 
-        private bool IsAssemblyDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+        private static bool IsAssemblyDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
             && kinds[0] == TokenKind.Other && tokens[0] == "."
             && (kinds[1] == TokenKind.Identifier || kinds[1] == TokenKind.SingleQuoted) && tokens[1] == "assembly"
