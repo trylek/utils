@@ -700,6 +700,12 @@ namespace ILTransform
             Other
         }
 
+        private bool IsAssemblyDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index == 3)
+            && kinds[0] == TokenKind.Other && tokens[0] == "."
+            && (kinds[1] == TokenKind.Identifier || kinds[1] == TokenKind.SingleQuoted) && tokens[1] == "assembly"
+            && kinds[2] == TokenKind.WhiteSpace;
+
         private static bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
             && kinds[0] == TokenKind.Other && tokens[0] == "."
@@ -917,7 +923,8 @@ namespace ILTransform
                         else if (IsNamespaceDeclName(tokens, kinds, i)
                             || IsMethodName(tokens, kinds, i)
                             || IsTypeNameDef(tokens, kinds, i)
-                            || IsVariableName(tokens, kinds, i))
+                            || IsVariableName(tokens, kinds, i)
+                            || IsAssemblyDeclName(tokens, kinds, i))
                         {
                             replace = false;
                         }
