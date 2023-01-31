@@ -237,7 +237,8 @@ namespace ILTransform
                 {
                     if (isILTest)
                     {
-                        string classLine = $".class public auto ansi Test_{Path.GetFileNameWithoutExtension(source)} extends [mscorlib] System.Object {{";
+                        string testClass = TestProject.SanitizeIdentifier(Path.GetFileNameWithoutExtension(source), isILTest);
+                        string classLine = $".class public auto ansi {testClass} {{";
                         lines.Insert(_testProject.FirstMainMethodDefLine, classLine);
 
                         // There's a significant problem with inserted lines throwing off the precomputed lines.
@@ -695,6 +696,12 @@ namespace ILTransform
             Other
         }
 
+        private static bool IsAssemblyDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+            => (index == 3)
+            && kinds[0] == TokenKind.Other && tokens[0] == "."
+            && (kinds[1] == TokenKind.Identifier || kinds[1] == TokenKind.SingleQuoted) && tokens[1] == "assembly"
+            && kinds[2] == TokenKind.WhiteSpace;
+
         private static bool IsNamespaceDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
             && kinds[0] == TokenKind.Other && tokens[0] == "."
@@ -912,7 +919,8 @@ namespace ILTransform
                         else if (IsNamespaceDeclName(tokens, kinds, i)
                             || IsMethodName(tokens, kinds, i)
                             || IsTypeNameDef(tokens, kinds, i)
-                            || IsVariableName(tokens, kinds, i))
+                            || IsVariableName(tokens, kinds, i)
+                            || IsAssemblyDeclName(tokens, kinds, i))
                         {
                             replace = false;
                         }

@@ -237,6 +237,17 @@ namespace ILTransform
             return false;
         }
 
+        public static List<string> SpecialTokens() => new List<string> {
+            "add", "and", "br", "brtrue", "brfalse", "ble", "blt", "beq",    "bge", "bgt", "call", "ceq", "cgt", "ckfinite", "clt", "cpblk", "div",
+            "dup", "initblk", "jmp", "ldobj", "ldtoken", "mul", "neg", "nop", "rem", "ret", "sub", "xor", "callvirt",
+            "castclass", "cpobj", "initobj", "isinst", "switch"
+        };
+
+        public static bool IsSpecialToken(string input)
+        {
+            return SpecialTokens().Contains(input);
+        }
+
         public static string SanitizeIdentifier(string source, bool isIL)
         {
             StringBuilder output = new StringBuilder();
@@ -260,7 +271,12 @@ namespace ILTransform
                     output.Append("__");
                 }
             }
-            return output.ToString();
+            string outputString = output.ToString();
+            if (IsSpecialToken(outputString))
+            {
+                outputString += "_";
+            }
+            return outputString;
         }
 
         public static int GetIndent(string line)
@@ -1166,49 +1182,62 @@ namespace ILTransform
             }
         }
 
-        // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
+        // Update IL filenames for each compile il using project name (as "$(MSBuildProjectName)")
+        public void FixILFilesWithProjectNames()
+        {
+            foreach (TestProject testProject in _projects.Where(p => p.NewAbsolutePath != null && p.CompileFilesIncludeProjectName))
+            {
+                FixILFileName(testProject);
+            }
+        }
+
         public void FixILFileNames()
         {
             foreach (TestProject testProject in _projects)
             {
-                if (!testProject.IsILProject) continue;
-                if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) continue;
-
-                string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
-
-                string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
-                string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
-                string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
-
-                TestProject.GetKeyNameRootNameAndSuffix(
-                    testProject.NewAbsolutePath ?? testProject.AbsolutePath,
-                    out _,
-                    out string projectRootName,
-                    out _);
-                string newSourceFile = string.Concat(dir, Path.DirectorySeparatorChar, projectRootName, extension);
-
-                if (rootName != projectRootName)
-                {
-                    if (_movedFiles.TryAdd(testProject.MainClassSourceFile, newSourceFile))
-                    {
-                        Utils.FileMove(testProject.MainClassSourceFile, newSourceFile);
-                    }
-                    else
-                    {
-                        // Already moved this file. Check that the targets match.
-                        string prevCopy = _movedFiles[testProject.MainClassSourceFile];
-                        if (newSourceFile != prevCopy)
-                        {
-                            Console.WriteLine($"Conflict in moving {testProject.MainClassSourceFile}");
-                            Console.WriteLine($"to {newSourceFile}");
-                            Console.WriteLine($"and {prevCopy}");
-                        }
-                    }
-                    testProject.NewTestClassSourceFile = newSourceFile;
-                    testProject.CompileFiles[0] = newSourceFile;
-                }
+                FixILFileName(testProject);
             }
+        }
+        
+        // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
+        private void FixILFileName(TestProject testProject)
+        {
+            if (!testProject.IsILProject) return;
+            if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) return;
 
+            string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
+
+            string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
+            string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
+            string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
+
+            TestProject.GetKeyNameRootNameAndSuffix(
+                testProject.NewAbsolutePath ?? testProject.AbsolutePath,
+                out _,
+                out string projectRootName,
+                out _);
+            string newSourceFile = string.Concat(dir, Path.DirectorySeparatorChar, projectRootName, extension);
+
+            if (rootName != projectRootName)
+            {
+                if (_movedFiles.TryAdd(testProject.MainClassSourceFile, newSourceFile))
+                {
+                    Utils.FileMove(testProject.MainClassSourceFile, newSourceFile);
+                }
+                else
+                {
+                    // Already moved this file. Check that the targets match.
+                    string prevCopy = _movedFiles[testProject.MainClassSourceFile];
+                    if (newSourceFile != prevCopy)
+                    {
+                        Console.WriteLine($"Conflict in moving {testProject.MainClassSourceFile}");
+                        Console.WriteLine($"to {newSourceFile}");
+                        Console.WriteLine($"and {prevCopy}");
+                    }
+                }
+                testProject.NewTestClassSourceFile = newSourceFile;
+                testProject.CompileFiles[0] = newSourceFile;
+            }
         }
 
         // Side effects: Creates cs/csproj files
