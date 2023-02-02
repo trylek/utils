@@ -419,6 +419,16 @@ namespace ILTransform
             return false;
         }
 
+        public string ReplaceOrUpdateStringWithVars(string input)
+        {
+            // TestLibraryProjectPath is a global variable that any test can include so remove prev and post path
+            if (input.Contains("$(TestLibraryProjectPath)"))
+            {
+                return "$(TestLibraryProjectPath)";
+            }
+            return input;
+        }
+
         public bool HasSameContentAs(TestProject project2)
         {
             if (CompileFiles.Length == 0 || project2.CompileFiles.Length == 0)
@@ -435,11 +445,14 @@ namespace ILTransform
             }
             for (int refIndex = 0; refIndex < ProjectReferences.Length; refIndex++)
             {
-                string ref1 = ProjectReferences[refIndex];
-                string ref2 = project2.ProjectReferences[refIndex];
+                string ref1 = ReplaceOrUpdateStringWithVars(ProjectReferences[refIndex]);
+                string ref2 = ReplaceOrUpdateStringWithVars(project2.ProjectReferences[refIndex]);
                 try
                 {
-                    if (ref1 != ref2 && File.ReadAllText(ref1) != File.ReadAllText(ref2))
+                    if (ref1 != ref2
+                        && !ref1.Contains("$(TestLibraryProjectPath)")
+                        && !ref2.Contains("$(TestLibraryProjectPath)")
+                        && File.ReadAllText(ref1) != File.ReadAllText(ref2))
                     {
                         return false;
                     }
