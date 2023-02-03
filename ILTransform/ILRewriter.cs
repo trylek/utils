@@ -426,7 +426,8 @@ namespace ILTransform
                     rewriteLine = _testProject.LastHeaderCommentLine;
                 }
                 rewriteLine++;
-                if (!lines.Any(l => l.Contains("using Xunit")))
+                Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\,*)?;");
+                if (!lines.Any(l => usingXunitRegex.IsMatch(l)))
                 {
                     lines.Insert(rewriteLine++, "using Xunit;");
                 }
