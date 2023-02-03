@@ -426,7 +426,10 @@ namespace ILTransform
                     rewriteLine = _testProject.LastHeaderCommentLine;
                 }
                 rewriteLine++;
-                lines.Insert(rewriteLine++, "using Xunit;");
+                if (!lines.Any(l => l.Contains("using Xunit")))
+                {
+                    lines.Insert(rewriteLine++, "using Xunit;");
+                }
                 rewritten = true;
             }
 
