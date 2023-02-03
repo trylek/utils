@@ -439,7 +439,10 @@ namespace ILTransform
                 string ref2 = project2.ProjectReferences[refIndex];
                 try
                 {
-                    if (ref1 != ref2 && File.ReadAllText(ref1) != File.ReadAllText(ref2))
+                    if (ref1 != ref2
+                        && !ref1.Contains("$(TestLibraryProjectPath)")
+                        && !ref2.Contains("$(TestLibraryProjectPath)")
+                        && File.ReadAllText(ref1) != File.ReadAllText(ref2))
                     {
                         return false;
                     }
@@ -1062,26 +1065,29 @@ namespace ILTransform
                 if (testProject.IsILProject)
                 {
                     TestProject.GetKeyNameRootNameAndSuffix(renamedFile, out _, out string rootName, out _);
-                    string sourceRootName = Path.GetFileNameWithoutExtension(testProject.CompileFiles.Single());
-
-                    if ((rootName != sourceRootName)
-                        && string.Equals(rootName, sourceRootName, StringComparison.OrdinalIgnoreCase))
+                    if (testProject.CompileFiles.Length == 1)
                     {
-                        // HACK: If we have "foo.ilproj" and "Foo.il", we'll have trouble doing the
-                        // case-sensitive rename of "Foo.il" to "foo.il", so we'll use "foo_.ilproj"
-                        // instead and then the rename to foo_.il will work.
+                        string sourceRootName = Path.GetFileNameWithoutExtension(testProject.CompileFiles.Single());
 
-                        // And if we're going to this trouble anyway, see if the name has a case
-                        // mismatch with the directory name.
-
-                        string innerDirectoryName = Path.GetFileName(dir);
-                        if ((renamedFile != innerDirectoryName)
-                            && string.Equals(renamedFile, innerDirectoryName, StringComparison.OrdinalIgnoreCase))
+                        if ((rootName != sourceRootName)
+                            && string.Equals(rootName, sourceRootName, StringComparison.OrdinalIgnoreCase))
                         {
-                            renamedFile = innerDirectoryName;
-                        }
+                            // HACK: If we have "foo.ilproj" and "Foo.il", we'll have trouble doing the
+                            // case-sensitive rename of "Foo.il" to "foo.il", so we'll use "foo_.ilproj"
+                            // instead and then the rename to foo_.il will work.
 
-                        renamedFile += "_";
+                            // And if we're going to this trouble anyway, see if the name has a case
+                            // mismatch with the directory name.
+
+                            string innerDirectoryName = Path.GetFileName(dir);
+                            if ((renamedFile != innerDirectoryName)
+                                && string.Equals(renamedFile, innerDirectoryName, StringComparison.OrdinalIgnoreCase))
+                            {
+                                renamedFile = innerDirectoryName;
+                            }
+
+                            renamedFile += "_";
+                        }
                     }
                 }
 
