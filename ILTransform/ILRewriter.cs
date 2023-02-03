@@ -417,7 +417,8 @@ namespace ILTransform
                 rewritten = true;
             }
 
-            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines[_testProject.LastUsingLine].Contains("Xunit"));
+            Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\,*)?;");
+            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines.Take(_testProject.LastUsingLine).Any(l => usingXunitRegex.IsMatch(l)));
             if (_settings.AddILFactAttributes && !isILTest && !usingXUnit)
             {
                 int rewriteLine = _testProject.LastUsingLine;
@@ -426,11 +427,7 @@ namespace ILTransform
                     rewriteLine = _testProject.LastHeaderCommentLine;
                 }
                 rewriteLine++;
-                Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\,*)?;");
-                if (!lines.Any(l => usingXunitRegex.IsMatch(l)))
-                {
-                    lines.Insert(rewriteLine++, "using Xunit;");
-                }
+                lines.Insert(rewriteLine++, "using Xunit;");
                 rewritten = true;
             }
 
