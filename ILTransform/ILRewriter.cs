@@ -530,6 +530,7 @@ namespace ILTransform
                             }
                             int identStart = charIndex;
                             string assemblyName;
+                            bool assemblyNameHadQuotes = false;
                             if (line[charIndex] == '\'')
                             {
                                 charIndex++;
@@ -537,10 +538,11 @@ namespace ILTransform
                                 {
                                 }
                                 assemblyName = line.Substring(identStart + 1, charIndex - identStart - 2);
+                                assemblyNameHadQuotes = true;
                             }
                             else
                             {
-                                while (charIndex < line.Length && TestProject.IsIdentifier(line[charIndex], isIL: true))
+                                while (charIndex < line.Length && (TestProject.IsIdentifier(line[charIndex], isIL: true) || line[charIndex] == '.'))
                                 {
                                     charIndex++;
                                 }
@@ -567,7 +569,13 @@ namespace ILTransform
                                     end = end.Substring(0, asNameMatch.Index);
                                 }
 
-                                line = line.Substring(0, identStart) + '\'' + sourceName + '\'' + end;
+                                // Simply case - if the original assembly name didn't have quotes and the new
+                                // assembly name is a substring of it, then the new one doesn't need quotes either.
+                                if (assemblyNameHadQuotes || !assemblyName.Contains(sourceName))
+                                {
+                                    sourceName = '\'' + sourceName + '\'';
+                                }
+                                line = line.Substring(0, identStart) + sourceName + end;
                                 lines[lineIndex] = line;
                                 rewritten = true;
                             }
