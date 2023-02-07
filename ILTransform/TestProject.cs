@@ -396,6 +396,7 @@ namespace ILTransform
                         case "value":
                         case "beforefieldinit":
                         case "sequential":
+                        case "serializable":
                         case "explicit":
                         case "abstract":
                             continue;
