@@ -2210,16 +2210,50 @@ namespace ILTransform
             int dirSize = (dirAttempt != null) && dirAttempt.AllUnique() ? dirAttempt.Select(s => s.Length).Sum() : int.MaxValue;
 
             int bestSize = Math.Min(filenameSize, Math.Min(projectSize, dirSize));
+            List<string> bestAttempt = new List<string>();
+            
             if (bestSize == int.MaxValue)
             {
-                Console.WriteLine("No simple namespace renames for projects");
-                return;
+                // Try see whether we can merge the results or use some index  
+                var dedupNames = new HashSet<string>();
+                var filenameCounter = new Dictionary<string, int>();
+                foreach ((string filename, string projectName) in filenameAttempt.Zip(projectAttempt))
+                {
+                    if (!string.IsNullOrEmpty(filename) && dedupNames.Add(filename))
+                    {
+                        bestAttempt.Add(filename);
+                    }
+                    else
+                    {
+                        if (dedupNames.Add(projectName))
+                        {
+                            bestAttempt.Add(projectName);
+                        }
+                        else
+                        {
+                            string indexedName = string.IsNullOrEmpty(filename) ? projectName : filename;
+                            if (!filenameCounter.ContainsKey(indexedName))
+                            {
+                                filenameCounter[indexedName] = 1;
+                            }
+                            while (!dedupNames.Add(indexedName + filenameCounter[indexedName]++) && filenameCounter[indexedName] < 1500) { }
+                            bestAttempt.Add(indexedName + (filenameCounter[indexedName] - 1));
+                        }
+                    }
+                }
+                if (!bestAttempt.AllUnique() || bestAttempt.Count() != filenameAttempt.Count())
+                {
+                    Console.WriteLine("No simple namespace renames for projects");
+                    return;
+                }
             }
-
-            List<string> bestAttempt =
+            else
+            {
+                bestAttempt =
                 (bestSize == filenameSize) ? filenameAttempt
                 : (bestSize == projectSize) ? projectAttempt
                 : dirAttempt!;
+            }
 
             foreach ((TestProject project, string newNamespace) in representativeProjects.Select(p => p.Item2).Zip(bestAttempt))
             {
