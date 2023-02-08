@@ -418,7 +418,7 @@ namespace ILTransform
             }
 
             Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\.*)?;");
-            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines.Take(_testProject.LastUsingLine).Any(l => usingXunitRegex.IsMatch(l)));
+            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines.Take(_testProject.LastUsingLine+1).Any(l => usingXunitRegex.IsMatch(l)));
             if (_settings.AddILFactAttributes && !isILTest && !usingXUnit)
             {
                 int rewriteLine = _testProject.LastUsingLine;
