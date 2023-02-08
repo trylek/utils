@@ -378,7 +378,8 @@ namespace ILTransform
                         if (TestProject.TryGetILTypeName(source, lines, i, out string? className))
                         {
                             string qualifiedClassName = _testProject.DeduplicatedNamespaceName + "." + className!;
-                            for (int s = lineIndex; s < lines.Count; s++)
+                            // There could be a class usage before the namespace line
+                            for (int s = 0; s < lines.Count; s++)
                             {
                                 if (s != i)
                                 {
