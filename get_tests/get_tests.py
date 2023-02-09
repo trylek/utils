@@ -43,21 +43,47 @@ def print_diff(tests1, tests2, label):
     for name in only:
         print(f'only in {label}: {name}')
 
-drop1 = [
-    'il_conformance',
-]
-drop2 = [
-    'runtime_81018',
-    'runtime_81019',
-    'runtime_81081',
-]
-drop_both = [
-    'b598031',
-    'github_26491',
-    'b323557_il',
+configs = \
+[
+    {
+        'drop1':
+        [
+            'il_conformance',
+        ],
+        'drop2':
+        [
+            'runtime_81018',
+            'runtime_81019',
+            'runtime_81081',
+        ],
+        'drop_both':
+        [
+            'b598031',
+            'github_26491',
+            'b323557_il',
+        ],
+    },
+    {
+        'drop1':
+        [
+        ],
+        'drop2':
+        [
+        ],
+        'drop_both':
+        [
+        ],
+    },
 ]
 
+config_index = 0
+
 def get(files):
+    config = configs[config_index]
+    drop1 = config['drop1']
+    drop2 = config['drop2']
+    drop_both = config['drop_both']
+
     tests1 = load(files[1], drop1 + drop_both)
     tests2 = {}
     for file in files[2:]:
