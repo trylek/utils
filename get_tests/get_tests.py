@@ -22,8 +22,12 @@ def load(file):
 
         # Tests are listed a bit differently (.cmd vs .dll, some capitalization).
         # Normalize here.
-        name, _ = os.path.splitext(attrib['name'].replace('\\\\','\\'))
+        name = attrib['name'].replace('\\\\','\\')
+        if name.endswith('.dll') or name.endswith('.cmd'):
+            name = name[:-4]
         name = name.lower()
+        if name in tests:
+            print(f"!! dup {name} in {file}")
         tests[name] = attrib['time']
     print(f"{file} has {len(tests)} entries")
     return tests
@@ -37,16 +41,17 @@ def get(files):
         add_size = len(tests)
         tests2.update(tests)
         if old_size + add_size != len(tests2):
-            print("no")
+            print("!! dup across files")
     print(f"len(tests1) = {len(tests1)}")
     print(f"len(tests2) = {len(tests2)}")
 
     # Used to find information about a specific test
+    #to_find = "26491"
     #for name in tests1.keys():
-    #    if "b11553" in name:
+    #    if to_find in name:
     #        print(name)
     #for name in tests2.keys():
-    #    if "b11553" in name:
+    #    if to_find in name:
     #        print(name)
 
     # Print differences
