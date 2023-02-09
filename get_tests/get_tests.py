@@ -13,7 +13,7 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-def load(file):
+def load(file, drop):
     tree = ET.parse(file)
     root = tree.getroot()
     tests = {}
@@ -26,27 +26,52 @@ def load(file):
         if name.endswith('.dll') or name.endswith('.cmd'):
             name = name[:-4]
         name = name.lower()
-        if name in tests:
-            print(f"!! dup {name} in {file}")
-        tests[name] = attrib['time']
-    print(f"{file} has {len(tests)} entries")
+        if not any((d in name for d in drop)):
+            if name in tests:
+                print(f'!! dup {name} in {file}')
+            tests[name] = attrib['time']
+    print(f'{file} has {len(tests)} entries')
     return tests
 
+def print_diff(tests1, tests2, label):
+    only = []
+    #for name in tests1.keys():
+    #    if name not in tests2.keys():
+    #        only.append(name)
+    only = list(tests1.keys() - tests2.keys())
+    only.sort()
+    for name in only:
+        print(f'only in {label}: {name}')
+
+drop1 = [
+    'il_conformance',
+]
+drop2 = [
+    'runtime_81018',
+    'runtime_81019',
+    'runtime_81081',
+]
+drop_both = [
+    'b598031',
+    'github_26491',
+    'b323557_il',
+]
+
 def get(files):
-    tests1 = load(files[1])
+    tests1 = load(files[1], drop1 + drop_both)
     tests2 = {}
     for file in files[2:]:
-        tests = load(file)
+        tests = load(file, drop2 + drop_both)
         old_size = len(tests2)
         add_size = len(tests)
         tests2.update(tests)
         if old_size + add_size != len(tests2):
-            print("!! dup across files")
-    print(f"len(tests1) = {len(tests1)}")
-    print(f"len(tests2) = {len(tests2)}")
+            print('!! dup across files')
+    print(f'len(tests1) = {len(tests1)}')
+    print(f'len(tests2) = {len(tests2)}')
 
     # Used to find information about a specific test
-    #to_find = "26491"
+    #to_find = '26491'
     #for name in tests1.keys():
     #    if to_find in name:
     #        print(name)
@@ -55,14 +80,10 @@ def get(files):
     #        print(name)
 
     # Print differences
-    for name in tests1.keys():
-        if name not in tests2.keys():
-            print(f"only in 1: {name}")
-    for name in tests2.keys():
-        if name not in tests1.keys():
-            print(f"only in 2: {name}")
+    print_diff(tests1, tests2, '1')
+    print_diff(tests2, tests1, '2')
 
     # Extend comparison/reporting here
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     get(sys.argv)
