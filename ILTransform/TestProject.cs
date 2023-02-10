@@ -200,7 +200,7 @@ namespace ILTransform
             => char.IsDigit(c) || char.IsLetter(c) || c == '_' || (isIL && (c == '@' || c == '$' || c == '`'));
 
         private static Regex PublicRegex = new Regex(@"(\s|^)public(\s|$)");
-        private static Regex NotPublicRegex = new Regex(@"(?:private|internal)(?<ws>\s+)");
+        private static Regex NotPublicRegex = new Regex(@"(?:private|internal|assembly|family|famandassem|famorassem|privatescope)(?<ws>\s+)");
 
         // Side effect: Changes private/internal to public in 'line'
         // Side effect (force==true): If above fails, adds "public" to 'line'
