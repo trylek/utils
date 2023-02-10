@@ -14,7 +14,22 @@ import os
 import sys
 import xml.etree.ElementTree as ET
 
-def load(file, drop):
+def test_count(list_tests):
+    return sum(len(x) for x in list_tests.values())
+
+def add_dict_list_item(d, k, v):
+    result = d.setdefault(k, [])
+    result.append(v)
+
+def add_dict_list_list(d, k, v):
+    result = d.setdefault(k, [])
+    result.extend(v)
+
+def update_dict_list(d1, d2):
+    for k, v in d2.items():
+        add_dict_list_list(d1, k, v)
+
+def load(file, drop, canon):
     tree = ET.parse(file)
     root = tree.getroot()
     tests = {}
@@ -23,26 +38,34 @@ def load(file, drop):
 
         # Tests are listed a bit differently (.cmd vs .dll, some capitalization).
         # Normalize here.
-        name = attrib['name'].replace('\\\\','\\')
-        if name.endswith('.dll') or name.endswith('.cmd'):
-            name = name[:-4]
-        name = name.lower()
-        if not any((d in name for d in drop)):
-            if name in tests:
-                print(f'!! dup {name} in {file}')
-            tests[name] = attrib['time']
-    print(f'{file} has {len(tests)} entries')
+        name = attrib['name']
+        canon_name = name.replace('\\\\','\\')
+        if canon_name.endswith('.dll') or canon_name.endswith('.cmd'):
+            canon_name = canon_name[:-4]
+        canon_name = canon_name.lower()
+        if (any(d in canon_name for d in drop)):
+            continue
+
+        for c in canon:
+            if c in canon_name:
+                canon_name = c
+                break
+        add_dict_list_item(tests, canon_name, (name, attrib['time']))
+    print(f'{file} has {len(tests)} entries and {test_count(tests)} tests')
     return tests
 
 def print_diff(tests1, tests2, label):
     only = []
-    #for name in tests1.keys():
-    #    if name not in tests2.keys():
-    #        only.append(name)
-    only = list(tests1.keys() - tests2.keys())
-    only.sort()
-    for name in only:
-        print(f'only in {label}: {name}')
+    keys1 = list(tests1.keys())
+    keys1.sort()
+    for k in keys1:
+        if k not in tests2:
+            print(f'only in {label}: {k}')
+        else:
+            v1 = tests1[k]
+            v2 = tests2[k]
+            if len(v1) > len(v2):
+                print(f'more in {label}: {k} ({len(v1)} > {len(v2)})')
 
 configs = \
 [
@@ -57,7 +80,7 @@ configs = \
             'runtime_81019',
             'runtime_81081',
         ],
-        'drop_both':
+        'canon':
         [
             'b598031',
             'github_26491',
@@ -71,13 +94,11 @@ configs = \
         'drop2':
         [
         ],
-        'drop_both':
+        'canon':
         [
         ],
     },
 ]
-
-config_index = 0
 
 def group_test_by_directory(tests):
     tests_by_dir = {}
@@ -120,25 +141,27 @@ def get(args):
         help="Group output",
         action="store_true",
     )
+    cmd_parser.add_argument(
+        "-s",
+        "--size",
+        help="Display sizes",
+        action="store_true",
+    )
     cmd_parser.add_argument('files', nargs='+')
     cmd_args = cmd_parser.parse_args(args)
 
     config = configs[1 if cmd_args.b else 0]
     drop1 = config['drop1']
     drop2 = config['drop2']
-    drop_both = config['drop_both']
+    canon = config['canon']
 
-    tests1 = load(cmd_args.files[0], drop1 + drop_both)
+    tests1 = load(cmd_args.files[0], drop1, canon)
     tests2 = {}
     for file in cmd_args.files[1:]:
-        tests = load(file, drop2 + drop_both)
-        old_size = len(tests2)
-        add_size = len(tests)
-        tests2.update(tests)
-        if old_size + add_size != len(tests2):
-            print('!! dup across files')
-    print(f'len(tests1) = {len(tests1)}')
-    print(f'len(tests2) = {len(tests2)}')
+        tests = load(file, drop2, canon)
+        update_dict_list(tests2, tests)
+    print(f'group 1 has {len(tests1)} entries and {test_count(tests1)} tests')
+    print(f'group 2 has {len(tests2)} entries and {test_count(tests2)} tests')
 
     # Used to find information about a specific test
     #to_find = '26491'
