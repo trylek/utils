@@ -50,7 +50,7 @@ def load(file, drop, canon):
             if c in canon_name:
                 canon_name = c
                 break
-        add_dict_list_item(tests, canon_name, (name, attrib['time']))
+        add_dict_list_item(tests, canon_name, (name, float(attrib['time'])))
     print(f'{file} has {len(tests)} entries and {test_count(tests)} tests')
     return tests
 
@@ -66,6 +66,17 @@ def print_diff(tests1, tests2, label):
             v2 = tests2[k]
             if len(v1) > len(v2):
                 print(f'more in {label}: {k} ({len(v1)} > {len(v2)})')
+
+def print_size_diff(tests1, tests2, label, size_abs, size_ratio):
+    only = []
+    keys = list(tests1.keys() & tests2.keys())
+    keys.sort()
+    for k in keys:
+        v1 = sum(p[1] for p in tests1[k])
+        v2 = sum(p[1] for p in tests2[k])
+        if v1 - v2 > size_abs or v1/v2 > size_ratio:
+            print(f'slower in {label}: {k} ({v1:.2f} > {v2:.2f}) {v1/v2:.2f}')
+
 
 configs = \
 [
@@ -157,6 +168,18 @@ def get(args):
         help="Display sizes",
         action="store_true",
     )
+    cmd_parser.add_argument(
+        "--size-abs",
+        help="Threshold (bytes) for displaying size difference, needs -s",
+        type=int,
+        default=3,
+    )
+    cmd_parser.add_argument(
+        "--size-ratio",
+        help="Threshold (ratio) for displaying size difference, needs -s",
+        type=float,
+        default=1.5,
+    )
     cmd_parser.add_argument('files', nargs='+')
     cmd_args = cmd_parser.parse_args(args)
 
@@ -190,7 +213,9 @@ def get(args):
         print_diff(tests2, tests1, '2')
 
     # Extend comparison/reporting here
-    
+    if cmd_args.size:
+        print_size_diff(tests1, tests2, '1', cmd_args.size_abs, cmd_args.size_ratio)
+        print_size_diff(tests2, tests1, '2', cmd_args.size_abs, cmd_args.size_ratio)
     
 
 
