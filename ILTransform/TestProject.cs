@@ -1755,6 +1755,10 @@ namespace ILTransform
                 }
                 break;
             }
+            if(String.IsNullOrEmpty(sourceInfo.MainMethodName) && lines.Any(l => l.Contains("[Fact]")))
+            {
+                Console.WriteLine(path + " have [Fact] attribute but not matching main entry method.");
+            }
 
             if (isMainFile)
             {
