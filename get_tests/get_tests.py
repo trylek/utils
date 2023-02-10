@@ -67,14 +67,14 @@ def print_diff(tests1, tests2, label):
             if len(v1) > len(v2):
                 print(f'more in {label}: {k} ({len(v1)} > {len(v2)})')
 
-def print_size_diff(tests1, tests2, label, size_abs, size_ratio):
+def print_time_diff(tests1, tests2, label, time_abs, time_ratio):
     only = []
     keys = list(tests1.keys() & tests2.keys())
     keys.sort()
     for k in keys:
         v1 = sum(p[1] for p in tests1[k])
         v2 = sum(p[1] for p in tests2[k])
-        if v1 - v2 > size_abs or v1/v2 > size_ratio:
+        if v1 - v2 > time_abs or v1/v2 > time_ratio:
             print(f'slower in {label}: {k} ({v1:.2f} > {v2:.2f}) {v1/v2:.2f}')
 
 
@@ -163,20 +163,20 @@ def get(args):
         action="store_true",
     )
     cmd_parser.add_argument(
-        "-s",
-        "--size",
-        help="Display sizes",
+        "-t",
+        "--time",
+        help="Display times",
         action="store_true",
     )
     cmd_parser.add_argument(
-        "--size-abs",
-        help="Threshold (bytes) for displaying size difference, needs -s",
+        "--time-abs",
+        help="Threshold (bytes) for displaying time difference, needs -s",
         type=int,
         default=3,
     )
     cmd_parser.add_argument(
-        "--size-ratio",
-        help="Threshold (ratio) for displaying size difference, needs -s",
+        "--time-ratio",
+        help="Threshold (ratio) for displaying time difference, needs -s",
         type=float,
         default=1.5,
     )
@@ -213,9 +213,9 @@ def get(args):
         print_diff(tests2, tests1, '2')
 
     # Extend comparison/reporting here
-    if cmd_args.size:
-        print_size_diff(tests1, tests2, '1', cmd_args.size_abs, cmd_args.size_ratio)
-        print_size_diff(tests2, tests1, '2', cmd_args.size_abs, cmd_args.size_ratio)
+    if cmd_args.time:
+        print_time_diff(tests1, tests2, '1', cmd_args.time_abs, cmd_args.time_ratio)
+        print_time_diff(tests2, tests1, '2', cmd_args.time_abs, cmd_args.time_ratio)
         print(f"Total in 1: {sum(sum(t[1] for t in v) for v in tests1.values()):.2f}")
         print(f"Total in 2: {sum(sum(t[1] for t in v) for v in tests2.values()):.2f}")
     
