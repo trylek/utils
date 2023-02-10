@@ -216,6 +216,8 @@ def get(args):
     if cmd_args.size:
         print_size_diff(tests1, tests2, '1', cmd_args.size_abs, cmd_args.size_ratio)
         print_size_diff(tests2, tests1, '2', cmd_args.size_abs, cmd_args.size_ratio)
+        print(f"Total in 1: {sum(sum(t[1] for t in v) for v in tests1.values()):.2f}")
+        print(f"Total in 2: {sum(sum(t[1] for t in v) for v in tests2.values()):.2f}")
     
 
 
