@@ -115,18 +115,28 @@ def print_grouped_by_dir(tests1, tests2):
 
     for (directory_name, tests) in testsgroup1.items():
         tests2 = testsgroup2.get(directory_name, {})
-        tests1_only = tests.keys() - tests2.keys()
-        tests2_only = tests2.keys() - tests.keys()
-        all_distinct_tests = list(tests1_only | tests2_only)
+        all_distinct_tests = list(tests.keys() | tests2.keys())
         all_distinct_tests.sort()
-        if 0 < len(all_distinct_tests):
-            print(f"\nDirectory {directory_name}")
-            for test_name in all_distinct_tests:
-                short_name = "\\".join(test_name.split("\\")[-2:])
-                if test_name in tests1_only:
-                    print(f"\t Only in 1: {short_name}")
+        found = False
+        for test_name in all_distinct_tests:
+            if not(test_name in tests and test_name in tests2 and len(tests[test_name]) == len(tests2[test_name])):
+                found = True
+                break
+        if not found:
+            continue
+        print(f"\nDirectory {directory_name}")
+        for test_name in all_distinct_tests:
+            short_name = "\\".join(test_name.split("\\")[-2:])
+            if test_name in tests:
+                if test_name in tests2:
+                    if len(tests[test_name]) > len(tests2[test_name]):
+                        print(f"\t More in 1: {short_name} {len(tests[test_name])} > {len(tests2[test_name])}")
+                    if len(tests[test_name]) < len(tests2[test_name]):
+                        print(f"\t More in 2: {short_name} {len(tests2[test_name])} > {len(tests[test_name])}")
                 else:
-                    print(f"\t Only in 2: {short_name}")
+                    print(f"\t Only in 1: {short_name}")
+            elif test_name in tests2:
+                print(f"\t Only in 2: {short_name}")
 
 def get(args):
     cmd_parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
