@@ -9,6 +9,7 @@
 #   d:/r/runtime2/artifacts/log/JIT.Regression.Regression_2.testRun.xml
 #   ...
 
+import argparse
 import os
 import sys
 import xml.etree.ElementTree as ET
@@ -98,7 +99,7 @@ def print_grouped_by_dir(tests1, tests2):
         all_distinct_tests = list(tests1_only | tests2_only)
         all_distinct_tests.sort()
         if 0 < len(all_distinct_tests):
-            print(f"\n\nDirectory {directory_name}")
+            print(f"\nDirectory {directory_name}")
             for test_name in all_distinct_tests:
                 short_name = "\\".join(test_name.split("\\")[-2:])
                 if test_name in tests1_only:
@@ -106,15 +107,30 @@ def print_grouped_by_dir(tests1, tests2):
                 else:
                     print(f"\t Only in 2: {short_name}")
 
-def get(files):
-    config = configs[config_index]
+def get(args):
+    cmd_parser = argparse.ArgumentParser(fromfile_prefix_chars="@")
+    cmd_parser.add_argument(
+        "-b",
+        help="Switch to second config",
+        action="store_true",
+    )
+    cmd_parser.add_argument(
+        "-g",
+        "--group",
+        help="Group output",
+        action="store_true",
+    )
+    cmd_parser.add_argument('files', nargs='+')
+    cmd_args = cmd_parser.parse_args(args)
+
+    config = configs[1 if cmd_args.b else 0]
     drop1 = config['drop1']
     drop2 = config['drop2']
     drop_both = config['drop_both']
 
-    tests1 = load(files[1], drop1 + drop_both)
+    tests1 = load(cmd_args.files[0], drop1 + drop_both)
     tests2 = {}
-    for file in files[2:]:
+    for file in cmd_args.files[1:]:
         tests = load(file, drop2 + drop_both)
         old_size = len(tests2)
         add_size = len(tests)
@@ -134,13 +150,16 @@ def get(files):
     #        print(name)
 
     # Print differences
-    #print_diff(tests1, tests2, '1')
-    #print_diff(tests2, tests1, '2')
+    if cmd_args.group:
+        print_grouped_by_dir(tests1, tests2)
+    else:
+        print_diff(tests1, tests2, '1')
+        print_diff(tests2, tests1, '2')
 
     # Extend comparison/reporting here
-    print_grouped_by_dir(tests1, tests2)
+    
     
 
 
 if __name__ == '__main__':
-    get(sys.argv)
+    get(sys.argv[1:])
