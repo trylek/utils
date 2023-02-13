@@ -512,14 +512,6 @@ namespace ILTransform
             {
                 suffixIndex -= 2;
             }
-            else if (rootName.EndsWith("_TargetUnix"))
-            {
-                suffixIndex -= 11;
-            }
-            else if (rootName.EndsWith("_TargetWindows"))
-            {
-                suffixIndex -= 14;
-            }
             keyName = rootName.Substring(0, keyNameIndex);
             suffix = string.Concat(rootName.AsSpan(suffixIndex), suffix);
             rootName = rootName.Substring(0, suffixIndex);
