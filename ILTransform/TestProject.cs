@@ -2229,12 +2229,13 @@ namespace ILTransform
                         else
                         {
                             string indexedName = string.IsNullOrEmpty(filename) ? projectName : filename;
-                            if (!filenameCounter.ContainsKey(indexedName))
+                            int counter = filenameCounter.GetValueOrDefault(indexedName, 1);
+                            while (!dedupNames.Add(indexedName + counter))
                             {
-                                filenameCounter[indexedName] = 1;
+                                counter++;
                             }
-                            while (!dedupNames.Add(indexedName + filenameCounter[indexedName]++) && filenameCounter[indexedName] < 1500) { }
-                            bestAttempt.Add(indexedName + (filenameCounter[indexedName] - 1));
+                            filenameCounter[indexedName] = counter;
+                            bestAttempt.Add(indexedName + counter);
                         }
                     }
                 }
