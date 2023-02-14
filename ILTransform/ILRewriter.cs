@@ -381,10 +381,7 @@ namespace ILTransform
                             // There could be a class usage before the namespace line
                             for (int s = 0; s < lines.Count; s++)
                             {
-                                if (s != i)
-                                {
-                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, isIL: isILTest, IdentKind.TypeUse);
-                                }
+                                lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, isIL: isILTest, IdentKind.TypeUse);
                             }
                         }
                     }
