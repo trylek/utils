@@ -378,12 +378,10 @@ namespace ILTransform
                         if (TestProject.TryGetILTypeName(source, lines, i, out string? className))
                         {
                             string qualifiedClassName = _testProject.DeduplicatedNamespaceName + "." + className!;
-                            for (int s = lineIndex; s < lines.Count; s++)
+                            // There could be a class usage before the namespace line
+                            for (int s = 0; s < lines.Count; s++)
                             {
-                                if (s != i)
-                                {
-                                    lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, isIL: isILTest, IdentKind.TypeUse);
-                                }
+                                lines[s] = ReplaceIdent(lines[s], className!, qualifiedClassName, isIL: isILTest, IdentKind.TypeUse);
                             }
                         }
                     }
@@ -417,8 +415,8 @@ namespace ILTransform
                 rewritten = true;
             }
 
-            Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\,*)?;");
-            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines.Take(_testProject.LastUsingLine).Any(l => usingXunitRegex.IsMatch(l)));
+            Regex usingXunitRegex = new Regex(@"^\s*using\s+Xunit\s*(?:\\.*)?;");
+            bool usingXUnit = (_testProject.LastUsingLine >= 0 && lines.Take(_testProject.LastUsingLine+1).Any(l => usingXunitRegex.IsMatch(l)));
             if (_settings.AddILFactAttributes && !isILTest && !usingXUnit)
             {
                 int rewriteLine = _testProject.LastUsingLine;
@@ -704,6 +702,14 @@ namespace ILTransform
             Identifier,
             Other
         }
+        private static bool IsEventDeclName(List<string> tokens, List<TokenKind> kinds, int index)
+        {
+            int pointIndex = kinds[0] == TokenKind.WhiteSpace ? 1 : 0;
+            return  index == (3+pointIndex)
+                && kinds[pointIndex] == TokenKind.Other && tokens[pointIndex] == "."
+                && (kinds[1 + pointIndex] == TokenKind.Identifier || kinds[1 + pointIndex] == TokenKind.SingleQuoted) && tokens[1 + pointIndex] == "event"
+                && kinds[2 + pointIndex] == TokenKind.WhiteSpace;
+        }
 
         private static bool IsAssemblyDeclName(List<string> tokens, List<TokenKind> kinds, int index)
             => (index == 3)
@@ -921,7 +927,8 @@ namespace ILTransform
                         else if (IsTypePrefix(tokens, kinds, i)
                             || IsTypeNameUse(tokens, kinds, i)
                             || IsInheritanceType(tokens, kinds, i)
-                            || IsOperatorType(tokens, kinds, i))
+                            || IsOperatorType(tokens, kinds, i)
+                            || IsEventDeclName(tokens, kinds, i))
                         {
                             // good
                         }

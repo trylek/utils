@@ -238,9 +238,9 @@ namespace ILTransform
         }
 
         public static List<string> SpecialTokens() => new List<string> {
-            "add", "and", "br", "brtrue", "brfalse", "ble", "blt", "beq",    "bge", "bgt", "call", "ceq", "cgt", "ckfinite", "clt", "cpblk", "div",
-            "dup", "initblk", "jmp", "ldobj", "ldtoken", "mul", "neg", "nop", "rem", "ret", "sub", "xor", "callvirt",
-            "castclass", "cpobj", "initobj", "isinst", "switch"
+            "add", "and", "br", "brtrue", "brfalse", "ble", "blt", "beq", "bge", "bgt", "call", "ceq", "cgt", "ckfinite", "clt", "cpblk", "div",
+            "dup", "filter", "finally", "initblk", "jmp", "ldobj", "ldtoken", "mul", "neg", "nested", "nop", "rem", "ret", "sub", "xor", "callvirt",
+            "castclass", "cpobj", "initobj", "isinst", "switch", "rethrow"
         };
 
         public static bool IsSpecialToken(string input)
@@ -396,6 +396,7 @@ namespace ILTransform
                         case "value":
                         case "beforefieldinit":
                         case "sequential":
+                        case "serializable":
                         case "explicit":
                         case "abstract":
                             continue;
@@ -1746,6 +1747,10 @@ namespace ILTransform
                 }
                 break;
             }
+            if(String.IsNullOrEmpty(sourceInfo.MainMethodName) && lines.Any(l => l.Contains("[Fact]")))
+            {
+                Console.WriteLine(path + " have [Fact] attribute but not matching main entry method.");
+            }
 
             if (isMainFile)
             {
@@ -2202,16 +2207,48 @@ namespace ILTransform
             int dirSize = (dirAttempt != null) && dirAttempt.AllUnique() ? dirAttempt.Select(s => s.Length).Sum() : int.MaxValue;
 
             int bestSize = Math.Min(filenameSize, Math.Min(projectSize, dirSize));
+            List<string> bestAttempt = new List<string>();
+            
             if (bestSize == int.MaxValue)
             {
-                Console.WriteLine("No simple namespace renames for projects");
-                return;
+                // Try see whether we can merge the results or use some index  
+                var dedupNames = new HashSet<string>();
+                var filenameCounter = new Dictionary<string, int>();
+                foreach ((string filename, string projectName) in filenameAttempt.Zip(projectAttempt))
+                {
+                    if (!string.IsNullOrEmpty(filename) && dedupNames.Add(filename))
+                    {
+                        bestAttempt.Add(filename);
+                    }
+                    else
+                    {
+                        if (dedupNames.Add(projectName))
+                        {
+                            bestAttempt.Add(projectName);
+                        }
+                        else
+                        {
+                            string indexedName = string.IsNullOrEmpty(filename) ? projectName : filename;
+                            int counter = filenameCounter.GetValueOrDefault(indexedName, 0);
+                            while (!dedupNames.Add(indexedName + ++counter)) {}
+                            filenameCounter[indexedName] = counter;
+                            bestAttempt.Add(indexedName + counter);
+                        }
+                    }
+                }
+                if (!bestAttempt.AllUnique() || bestAttempt.Count() != filenameAttempt.Count())
+                {
+                    Console.WriteLine("No simple namespace renames for projects");
+                    return;
+                }
             }
-
-            List<string> bestAttempt =
+            else
+            {
+                bestAttempt =
                 (bestSize == filenameSize) ? filenameAttempt
                 : (bestSize == projectSize) ? projectAttempt
                 : dirAttempt!;
+            }
 
             foreach ((TestProject project, string newNamespace) in representativeProjects.Select(p => p.Item2).Zip(bestAttempt))
             {
