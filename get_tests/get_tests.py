@@ -29,7 +29,7 @@ def update_dict_list(d1, d2):
     for k, v in d2.items():
         add_dict_list_list(d1, k, v)
 
-def load(file, drop, canon):
+def load(file, drop, canon, zero=False):
     tree = ET.parse(file)
     root = tree.getroot()
     tests = {}
@@ -50,7 +50,8 @@ def load(file, drop, canon):
             if c in canon_name:
                 canon_name = c
                 break
-        add_dict_list_item(tests, canon_name, (name, float(attrib['time'])))
+        time = 0 if zero else float(attrib['time'])
+        add_dict_list_item(tests, canon_name, (name, time))
     print(f'{file} has {len(tests)} entries and {test_count(tests)} tests')
     return tests
 
@@ -74,8 +75,9 @@ def print_time_diff(tests1, tests2, label, time_abs, time_ratio):
     for k in keys:
         v1 = sum(p[1] for p in tests1[k])
         v2 = sum(p[1] for p in tests2[k])
-        if v1 - v2 > time_abs or v1/v2 > time_ratio:
-            print(f'slower in {label}: {k} ({v1:.2f} > {v2:.2f}) {v1/v2:.2f}')
+        ratio = float('inf') if v2 == 0 else v1/v2
+        if v1 - v2 > time_abs or ratio > time_ratio:
+            print(f'slower in {label}: {k} ({v1:.2f} > {v2:.2f}) {ratio:.2f}')
 
 
 configs = \
@@ -95,7 +97,7 @@ configs = \
         [
             'b598031',
             'github_26491',
-            'b323557_il',
+            'JIT\Regression\CLR-x86-JIT\V2.0-Beta2\b323557',
         ],
     },
     {
@@ -180,15 +182,24 @@ def get(args):
         type=float,
         default=1.5,
     )
+    cmd_parser.add_argument(
+        "-z",
+        "--zero-first",
+        help="View group 2 times (hack - zeroes the group 1 times)",
+        action="store_true",
+    )
+
     cmd_parser.add_argument('files', nargs='+')
     cmd_args = cmd_parser.parse_args(args)
+    if cmd_args.zero_first:
+        cmd_args.time_abs = 0
 
     config = configs[1 if cmd_args.b else 0]
     drop1 = config['drop1']
     drop2 = config['drop2']
     canon = config['canon']
 
-    tests1 = load(cmd_args.files[0], drop1, canon)
+    tests1 = load(cmd_args.files[0], drop1, canon, zero=cmd_args.zero_first)
     tests2 = {}
     for file in cmd_args.files[1:]:
         tests = load(file, drop2, canon)
