@@ -556,7 +556,7 @@ namespace ILTransform
                                 }
                             }
                             int identEnd = charIndex;
-                            string sourceName = Path.GetFileNameWithoutExtension(source);
+                            TestProject.GetKeyNameRootNameAndSuffix(_testProject.TestProjectAlias, out _, out string sourceName, out _);
                             if (sourceName != assemblyName)
                             {
                                 string end = line.Substring(identEnd);
