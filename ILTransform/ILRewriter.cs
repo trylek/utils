@@ -734,7 +734,7 @@ namespace ILTransform
             && ((tokens[index + 1] == "::") || (tokens[index + 1] == "/")) // type::field or type::nestedtype
             && (kinds[index + 2] == TokenKind.Identifier || kinds[index + 2] == TokenKind.SingleQuoted);
 
-        private static string[] TypeDefTokens = { "public", "auto", "ansi" };
+        private static string[] TypeDefTokens = { "public", "abstract", "auto", "ansi", "sealed", "beforefieldinit" };
         private static bool IsTypeNameDef(List<string> tokens, List<TokenKind> kinds, int index)
         {
             for (; index >= 2; index -= 2)
