@@ -239,7 +239,7 @@ namespace ILTransform
 
         public static List<string> SpecialTokens() => new List<string> {
             "add", "and", "br", "brtrue", "brfalse", "ble", "blt", "beq", "bge", "bgt", "call", "ceq", "cgt", "ckfinite", "clt", "cpblk", "div",
-            "dup", "filter", "finally", "initblk", "jmp", "ldobj", "ldtoken", "mul", "neg", "nested", "nop", "rem", "ret", "sub", "xor", "callvirt",
+            "dup", "filter", "finally", "initblk", "jmp", "ldobj", "ldtoken", "ldftn", "mul", "neg", "nested", "nop", "rem", "ret", "sub", "xor", "callvirt",
             "castclass", "cpobj", "initobj", "isinst", "switch", "rethrow"
         };
 
