@@ -1145,31 +1145,13 @@ namespace ILTransform
                 foreach (List<TestProject> projectList in rootNameToProjectMap.Values.Where(pl => pl.Count > 1))
                 {
                     List<string> projectDirs = projectList.Select(p => Path.GetDirectoryName(p.AbsolutePath)).ToList()!;
-                    List<string> extraRootNames;
 
                     // Simple case: sometest.csproj and sometest.ilproj => add _il to the ilproj
-                    int ilprojIndex;
-                    if ((projectList.Count == 2)
-                        && (Path.GetFileNameWithoutExtension(projectList[0].RelativePath) == Path.GetFileNameWithoutExtension(projectList[1].RelativePath))
-                        && (projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".csproj") != -1)
-                        && ((ilprojIndex = projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".ilproj")) != -1))
-                    {
-                        extraRootNames = new List<string> {
-                            ilprojIndex == 0 ? "il" : "",
-                            ilprojIndex == 1 ? "il" : ""
-                        };
-                    }
-                    else
-                    {
-                        List<string>? differences = Utils.GetNearestDirectoryWithDifferences(projectList.Select(p => p.AbsolutePath).ToList());
-                        if (differences == null)
-                        {
-                            Console.WriteLine("No collision found for duplicate project names:");
-                            projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
-                            continue;
-                        }
-                        extraRootNames = Utils.TrimSharedTokens(differences!);
-                    }
+                    List<string>? extraRootNames =
+                        DedupCSAndILProj(projectList) ??
+                        DedupSuffixDirProj(projectDirs) ??
+                        DedupDirProj(projectList);
+                    if (extraRootNames == null) continue;
 
                     foreach ((TestProject project, string projectDir, string extraRootName)
                         in projectList.Zip(projectDirs, extraRootNames))
@@ -1190,6 +1172,49 @@ namespace ILTransform
                     }
                 }
             }
+        }
+
+        // Returns suffixes to add (some may be empty) or null
+        private List<string>? DedupCSAndILProj(List<TestProject> projectList)
+        {
+            int ilprojIndex;
+            if ((projectList.Count == 2)
+                && (Path.GetFileNameWithoutExtension(projectList[0].RelativePath) == Path.GetFileNameWithoutExtension(projectList[1].RelativePath))
+                && (projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".csproj") != -1)
+                && ((ilprojIndex = projectList.FindIndex(p => Path.GetExtension(p.RelativePath) == ".ilproj")) != -1))
+            {
+                return new List<string> {
+                    ilprojIndex == 0 ? "il" : "",
+                    ilprojIndex == 1 ? "il" : ""
+                };
+            }
+
+            return null;
+        }
+
+        public static List<string>? DedupSuffixDirProj(List<string> projectDirs)
+        {
+            List<string> suffixes = new();
+            foreach (string dir in projectDirs)
+            {
+                string parentDir = Path.GetDirectoryName(dir)!;
+                string suffix = projectDirs.Contains(parentDir) ? Path.GetFileName(dir) : "";
+                suffixes.Add(suffix);
+            }
+            if (suffixes.All(s => string.IsNullOrEmpty(s))) { return null; }
+            return suffixes;
+        }
+
+        private List<string>? DedupDirProj(List<TestProject> projectList)
+        {
+            List<string>? differences = Utils.GetNearestDirectoryWithDifferences(projectList.Select(p => p.AbsolutePath).ToList());
+            if (differences == null)
+            {
+                Console.WriteLine("No collision found for duplicate project names:");
+                projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
+                return null;
+            }
+            return Utils.TrimSharedTokens(differences!);
         }
 
         // Update IL filenames for each compile il using project name (as "$(MSBuildProjectName)")
