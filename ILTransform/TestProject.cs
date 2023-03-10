@@ -1064,7 +1064,7 @@ namespace ILTransform
 
                 // This doesn't really fit into UnifyDbgRelProjects but is about project renaming,
                 // so it's here for now.
-                // Project and IL source names do -not- need to match, so this isn't needed.
+                // UPDATE: Project and IL source names do -not- need to match, so this isn't needed.
 #if false
                 if (testProject.IsILProject)
                 {
