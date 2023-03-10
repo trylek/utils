@@ -623,6 +623,7 @@ namespace ILTransform
             "IlasmRoundTripIncompatible",
             "SynthesizedPgoIncompatible",
             "CrossGenTest",
+            "NativeAotIncompatible",
         };
 
         public static string[] s_standardItemGroups = new string[]
