@@ -84,6 +84,7 @@ namespace ILTransform
         public bool HasFactAttribute = false;
         public bool HasExit = false;
         public bool HasWaitForPendingFinalizers = false;
+        public bool HasILAssemblyDefineFile = false;
     }
 
     public struct TestProjectPathEqualityComparer : IEqualityComparer<(string, TestProject)>
@@ -130,6 +131,9 @@ namespace ILTransform
         public int NamespaceLine => SourceInfo.NamespaceLine;
         public int NamespaceIdentLine => SourceInfo.NamespaceIdentLine;
         public bool HasFactAttribute => SourceInfo.HasFactAttribute;
+        public bool HasExit => SourceInfo.HasExit;
+        public bool HasWaitForPendingFinalizers => SourceInfo.HasWaitForPendingFinalizers;
+        public bool HasILAssemblyDefineFile => SourceInfo.HasILAssemblyDefineFile;
         public Dictionary<string, string> AllProperties;
         public HashSet<string> AllItemGroups;
 
@@ -189,11 +193,6 @@ namespace ILTransform
             SourceInfo = sourceInfo;
 
             IsILProject = Path.GetExtension(RelativePath).ToLower() == ".ilproj";
-
-            if (IsILProject && CompileFiles.Length != 1)
-            {
-                Console.WriteLine($"More than one IL file in {AbsolutePath}");
-            }
         }
 
         public bool NeedsRequiresProcessIsolation => RequiresProcessIsolationReasons.Length > 0;
@@ -788,9 +787,10 @@ namespace ILTransform
 
         public void DumpMultiSourceProjects(TextWriter writer)
         {
-            writer.WriteLine("PROJECT WITH MULTIPLE SOURCES");
-            writer.WriteLine("-----------------------------");
-            _projects.Where(p => p.CompileFiles.Length > 1).Select(p => p.AbsolutePath).ToList().ForEach(writer.WriteLine);
+            writer.WriteLine("PROJECT WITH MULTIPLE SOURCES (ignoring IL #define ASSEMBLY_NAME files)");
+            writer.WriteLine("-----------------------------------------------------------------------");
+            _projects.Where(p => p.CompileFiles.Length - (p.HasILAssemblyDefineFile ? 1 : 0) > 1)
+                .Select(p => p.AbsolutePath).ToList().ForEach(writer.WriteLine);
             writer.WriteLine();
         }
 
@@ -1049,7 +1049,7 @@ namespace ILTransform
 
         private static string RenameFileBase(string original, string endToReplace, string newEnd)
         {
-            if (original.EndsWith(newEnd)) return original;
+            if (!endToReplace.EndsWith(newEnd) && original.EndsWith(newEnd)) return original;
             if (!original.EndsWith(endToReplace)) return original;
             return string.Concat(original.AsSpan(0, original.Length - endToReplace.Length), newEnd);
         }
@@ -1063,11 +1063,6 @@ namespace ILTransform
                 string file = Path.GetFileNameWithoutExtension(testProject.RelativePath);
                 string ext = Path.GetExtension(testProject.RelativePath);
                 string renamedFile = file;
-                // What was this doing?
-                //if (renamedFile.StartsWith("_il"))
-                //{
-                //    renamedFile = string.Concat(renamedFile.AsSpan(3), "_il");
-                //}
                 renamedFile = RenameFileBase(renamedFile, "_speed_dbg", "_do");
                 renamedFile = RenameFileBase(renamedFile, "_speed_rel", "_ro");
                 renamedFile = RenameFileBase(renamedFile, "_opt_dbg", "_do");
@@ -1080,10 +1075,10 @@ namespace ILTransform
                 renamedFile = RenameFileBase(renamedFile, "-ret", "_r");
                 if (testProject.IsILProject)
                 {
-                    renamedFile = RenameFileBase(renamedFile, "_d", "_il_d");
-                    renamedFile = RenameFileBase(renamedFile, "_do", "_il_do");
-                    renamedFile = RenameFileBase(renamedFile, "_r", "_il_r");
-                    renamedFile = RenameFileBase(renamedFile, "_ro", "_il_ro");
+                    renamedFile = RenameFileBase(renamedFile, "_il_d", "_d");
+                    renamedFile = RenameFileBase(renamedFile, "_il_do", "_do");
+                    renamedFile = RenameFileBase(renamedFile, "_il_r", "_r");
+                    renamedFile = RenameFileBase(renamedFile, "_il_ro", "_ro");
                 }
 
                 // This doesn't really fit into UnifyDbgRelProjects but is about project renaming,
@@ -1537,16 +1532,18 @@ namespace ILTransform
             }
 
             SourceInfo sourceInfo = new SourceInfo();
+            bool first = true;
             foreach (string compileFile in compileFiles)
             {
                 try
                 {
-                    AnalyzeSource(compileFile, ref sourceInfo);
+                    AnalyzeSource(compileFile, first, ref sourceInfo);
                 }
                 catch (Exception ex)
                 {
                     Console.Error.WriteLine("Error analyzing '{0}': {1}", compileFile, ex);
                 }
+                first = false;
             }
 
             _projects.Add(new TestProject(
@@ -1562,12 +1559,13 @@ namespace ILTransform
 
         private static void AnalyzeSource(
             string path,
+            bool isFirstSource,
             ref SourceInfo sourceInfo)
         {
             if (path.IndexOf('*') < 0 && path.IndexOf('?') < 0)
             {
                 // Exact path
-                AnalyzeFileSource(path, ref sourceInfo);
+                AnalyzeFileSource(path, isFirstSource, ref sourceInfo);
                 return;
             }
 
@@ -1587,18 +1585,19 @@ namespace ILTransform
 
             foreach (string file in Directory.EnumerateFiles(directory, pattern, searchOption))
             {
-                AnalyzeFileSource(file, ref sourceInfo);
+                AnalyzeFileSource(file, false, ref sourceInfo);
             }
         }
 
         private static void AnalyzeFileSource(
             string path,
+            bool isFirstSource,
             ref SourceInfo sourceInfo)
         {
             switch (Path.GetExtension(path).ToLower())
             {
                 case ".il":
-                    AnalyzeILSource(path, ref sourceInfo);
+                    AnalyzeILSource(path, isFirstSource, ref sourceInfo);
                     break;
 
                 case ".cs":
@@ -1618,11 +1617,6 @@ namespace ILTransform
         private static void AnalyzeCSSource(string path, ref SourceInfo sourceInfo)
         {
             List<string> lines = new List<string>(File.ReadAllLines(path));
-
-            if (Path.GetFileName(path).ToLower() == "expl_obj_1.cs")
-            {
-                Console.WriteLine("AnalyzeCSSource: {0}", path);
-            }
 
             if (lines.Any(line => line.Contains("Environment.Exit")))
             {
@@ -1804,9 +1798,9 @@ namespace ILTransform
                 }
                 break;
             }
-            if(String.IsNullOrEmpty(sourceInfo.MainMethodName) && lines.Any(l => l.Contains("[Fact]")))
+            if (String.IsNullOrEmpty(sourceInfo.MainMethodName) && lines.Any(l => l.Contains("[Fact]")))
             {
-                Console.WriteLine(path + " have [Fact] attribute but not matching main entry method.");
+                Console.WriteLine(path + " has [Fact] attribute but not matching main entry method.");
             }
 
             if (isMainFile)
@@ -1926,14 +1920,16 @@ namespace ILTransform
             return true;
         }
 
-        private static void AnalyzeILSource(string path, ref SourceInfo sourceInfo)
+        private static void AnalyzeILSource(string path, bool isFirstSource, ref SourceInfo sourceInfo)
         {
-            if (Path.GetFileName(path) == "han3.il")
-            {
-                Console.WriteLine("AnalyzeILSource: {0}", path);
-            }
-
             List<string> lines = new List<string>(File.ReadAllLines(path));
+
+            string? firstLine = lines.Where(line => !string.IsNullOrEmpty(line)).FirstOrDefault();
+            if (firstLine?.StartsWith("#define ASSEMBLY_NAME") ?? false)
+            {
+                sourceInfo.HasILAssemblyDefineFile = true;
+                return;
+            }
 
             if (lines.Any(line => line.Contains("Environment::Exit")))
             {

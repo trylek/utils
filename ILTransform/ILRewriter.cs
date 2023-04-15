@@ -567,7 +567,7 @@ namespace ILTransform
                                     end = end.Substring(0, asNameMatch.Index);
                                 }
 
-                                // Simply case - if the original assembly name didn't have quotes and the new
+                                // Simple case - if the original assembly name didn't have quotes and the new
                                 // assembly name is a substring of it, then the new one doesn't need quotes either.
                                 if (assemblyNameHadQuotes || !assemblyName.Contains(sourceName))
                                 {
