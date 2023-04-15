@@ -83,6 +83,7 @@ namespace ILTransform
         public int NamespaceIdentLine = -1;
         public bool HasFactAttribute = false;
         public bool HasExit = false;
+        public bool HasWaitForPendingFinalizers = false;
     }
 
     public struct TestProjectPathEqualityComparer : IEqualityComparer<(string, TestProject)>
@@ -179,7 +180,8 @@ namespace ILTransform
             RequiresProcessIsolationReasons =
                 TestProjectStore.RequiresProcessIsolationProperties.Where(HasProperty).Concat(
                     TestProjectStore.RequiresProcessIsolationItemGroups.Where(HasItemGroup)).Concat(
-                        new[] { "Environment.Exit" }.Where(_ => sourceInfo.HasExit)).ToArray();
+                        new[] { "Environment.Exit" }.Where(_ => sourceInfo.HasExit)).Concat(
+                            new[] { "GC.WaitForPendingFinalizers" }.Where(_ => sourceInfo.HasWaitForPendingFinalizers)).ToArray();
 
             CompileFiles = compileFiles;
             CompileFilesIncludeProjectName = compileFilesIncludeProjectName;
@@ -803,8 +805,8 @@ namespace ILTransform
                 }
             }
 
-            writer.WriteLine("SOURCES USED IN MULTIPLE PROJECTS");
-            writer.WriteLine("---------------------------------");
+            writer.WriteLine("SOURCES USED IN MULTIPLE PROJECTS WITH THE SAME DEBUGOPT SETTINGS");
+            writer.WriteLine("-----------------------------------------------------------------");
 
             foreach (KeyValuePair<string, Dictionary<DebugOptimize, List<TestProject>>> sourceKvp in potentialDuplicateMap.Where(kvp => kvp.Value.Values.Any(l => l.Count > 1)).OrderBy(kvp => kvp.Key))
             {
@@ -816,6 +818,28 @@ namespace ILTransform
                     {
                         writer.WriteLine("   \\- {0}", project.AbsolutePath);
                     }
+                }
+            }
+
+            writer.WriteLine();
+
+            // ---
+
+            Dictionary<string, List<TestProject>> potentialILDuplicateMap = new Dictionary<string, List<TestProject>>();
+            foreach (TestProject project in _projects.Where(p => p.IsILProject && p.CompileFiles.Count() == 1))
+            {
+                Utils.AddToMultiMap(potentialILDuplicateMap, project.CompileFiles.First(), project);
+            }
+
+            writer.WriteLine("SOURCES USED IN MULTIPLE IL SINGLE-FILE PROJECTS");
+            writer.WriteLine("------------------------------------------------");
+
+            foreach (KeyValuePair<string, List<TestProject>> sourceKvp in potentialILDuplicateMap.Where(kvp => kvp.Value.Count > 1).OrderBy(kvp => kvp.Key))
+            {
+                writer.WriteLine(sourceKvp.Key);
+                foreach (TestProject project in sourceKvp.Value)
+                {
+                    writer.WriteLine("\\- {0}", project.AbsolutePath);
                 }
             }
 
@@ -954,7 +978,7 @@ namespace ILTransform
             writer.WriteLine();
 
             writer.WriteLine("PROJECTS REMAINING WITHOUT FACT ATTRIBUTES (Count={0})",
-                _projects.Where(p => !p.HasFactAttribute && !p.AddedFactAttribute).Count());
+                _projects.Where(p => p.MainClassName != "" && !p.HasFactAttribute && !p.AddedFactAttribute).Count());
             writer.WriteLine("------------------------------------------");
 
             _projects.Where(p => p.MainClassName != "" && !p.HasFactAttribute && !p.AddedFactAttribute)
@@ -1604,6 +1628,10 @@ namespace ILTransform
             {
                 sourceInfo.HasExit = true;
             }
+            if (lines.Any(line => line.Contains("GC.WaitForPendingFinalizers")))
+            {
+                sourceInfo.HasWaitForPendingFinalizers = true;
+            }
 
             string currentNamespace = "";
             for (int lineNumber = 0; lineNumber < lines.Count; ++lineNumber)
@@ -1910,6 +1938,10 @@ namespace ILTransform
             if (lines.Any(line => line.Contains("Environment::Exit")))
             {
                 sourceInfo.HasExit = true;
+            }
+            if (lines.Any(line => line.Contains("GC::WaitForPendingFinalizers")))
+            {
+                sourceInfo.HasWaitForPendingFinalizers = true;
             }
 
             AnalyzeILSourceForTypeNames(path, lines, ref sourceInfo);
