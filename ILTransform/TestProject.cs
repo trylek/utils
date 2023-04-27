@@ -108,6 +108,8 @@ namespace ILTransform
         public readonly string CLRTestProjectToRun;
         public readonly string CLRTestExecutionArguments;
         public readonly DebugOptimize DebugOptimize;
+        public bool InDebugOptimizeSet;
+        public string? DebugOptimizeSuffix;
         public readonly bool HasRequiresProcessIsolation;
         public readonly string[] RequiresProcessIsolationReasons;
         public readonly string[] CompileFiles;
@@ -134,6 +136,7 @@ namespace ILTransform
         public bool HasExit => SourceInfo.HasExit;
         public bool HasWaitForPendingFinalizers => SourceInfo.HasWaitForPendingFinalizers;
         public bool HasILAssemblyDefineFile => SourceInfo.HasILAssemblyDefineFile;
+        public bool AddedILAssemblyDefineFile;
         public Dictionary<string, string> AllProperties;
         public HashSet<string> AllItemGroups;
 
@@ -196,6 +199,11 @@ namespace ILTransform
         }
 
         public bool NeedsRequiresProcessIsolation => RequiresProcessIsolationReasons.Length > 0;
+
+        // Conservative approximations
+        public static bool IdentifierCanBeUnquoted(string s)
+            => (char.IsAsciiLetter(s[0]) || s[0] == '_') && s.All(c => char.IsAsciiLetterOrDigit(c) || c == '_');
+        public static bool IdentifierNeedsQuotes(string s) => !IdentifierCanBeUnquoted(s);
 
         public static bool IsIdentifier(char c, bool isIL)
             => char.IsDigit(c) || char.IsLetter(c) || c == '_' || (isIL && (c == '@' || c == '$' || c == '`'));
@@ -555,6 +563,7 @@ namespace ILTransform
     public class TestProjectStore
     {
         private readonly List<TestProject> _projects;
+        private readonly Dictionary<string, List<TestProject>> _projectNameMap;
         private readonly Dictionary<string, List<TestProject>> _classNameMap;
         private readonly Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>> _classNameDbgOptMap;
         private readonly HashSet<string> _rewrittenFiles;
@@ -563,6 +572,7 @@ namespace ILTransform
         public TestProjectStore()
         {
             _projects = new List<TestProject>();
+            _projectNameMap = new Dictionary<string, List<TestProject>>();
             _classNameMap = new Dictionary<string, List<TestProject>>();
             _classNameDbgOptMap = new Dictionary<string, Dictionary<DebugOptimize, List<TestProject>>>();
             _rewrittenFiles = new HashSet<string>();
@@ -577,7 +587,9 @@ namespace ILTransform
             {
                 ScanRecursive(rootPath, "", ref projectCount);
             }
+            PopulateProjectNameMap();
             PopulateClassNameMap();
+            CheckDebugOptimizeSets();
             Console.WriteLine("Done scanning {0} projects in {1} msecs", projectCount, sw.ElapsedMilliseconds);
         }
 
@@ -844,6 +856,18 @@ namespace ILTransform
             }
 
             writer.WriteLine();
+
+            // ---
+
+            writer.WriteLine("PROJECTS WITH SHARED SOURCES BUT NONSTANDARD FILENAMES");
+            writer.WriteLine("------------------------------------------------------");
+
+            _projects.Where(p => p.InDebugOptimizeSet)
+                .Where(p => p.DebugOptimizeSuffix == null)
+                .ToList()
+                .ForEach(p => Console.WriteLine($"{p.AbsolutePath} is in a dbg/opt set with a nonstandard base filename suffix"));
+
+            writer.WriteLine();
         }
 
         public void DumpDuplicateProjectContent(TextWriter writer)
@@ -895,14 +919,7 @@ namespace ILTransform
 
         public void DumpDuplicateSimpleProjectNames(TextWriter writer)
         {
-            Dictionary<string, List<TestProject>> simpleNameMap = new Dictionary<string, List<TestProject>>();
-            foreach (TestProject project in _projects)
-            {
-                string simpleName = Path.GetFileNameWithoutExtension(project.RelativePath);
-                Utils.AddToMultiMap(simpleNameMap, simpleName, project);
-            }
-
-            foreach (KeyValuePair<string, List<TestProject>> kvp in simpleNameMap.Where(kvp => kvp.Value.Count > 1).OrderByDescending(kvp => kvp.Value.Count))
+            foreach (KeyValuePair<string, List<TestProject>> kvp in _projectNameMap.Where(kvp => kvp.Value.Count > 1).OrderByDescending(kvp => kvp.Value.Count))
             {
                 writer.WriteLine("DUPLICATE PROJECT NAME: ({0}x): {1}", kvp.Value.Count, kvp.Key);
                 foreach (TestProject project in kvp.Value)
@@ -1117,8 +1134,15 @@ namespace ILTransform
 
                 if (renamedFile != file)
                 {
-                    string renamedPath = Path.Combine(dir, renamedFile + ext);
-                    Utils.FileMove(testProject.AbsolutePath, renamedPath, overwrite: false);
+                    if (_projectNameMap.ContainsKey(renamedFile))
+                    {
+                        Console.WriteLine($"Renamed project name {renamedFile} already exists");
+                    }
+                    else
+                    {
+                        string renamedPath = Path.Combine(dir, renamedFile + ext);
+                        Utils.FileMove(testProject.AbsolutePath, renamedPath, overwrite: false);
+                    }
                 }
             }
         }
@@ -1253,7 +1277,7 @@ namespace ILTransform
                 FixILFileName(testProject);
             }
         }
-        
+
         // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
         private void FixILFileName(TestProject testProject)
         {
@@ -1495,36 +1519,36 @@ namespace ILTransform
                             switch (item.Name)
                             {
                                 case "Compile":
+                                {
+                                    string? compileFileList = item.Attributes?["Include"]?.Value;
+                                    if (compileFileList is not null)
                                     {
-                                        string? compileFileList = item.Attributes?["Include"]?.Value;
-                                        if (compileFileList is not null)
+                                        string[] compileFileArray = compileFileList.Split(' ');
+                                        foreach (string compileFile in compileFileArray)
                                         {
-                                            string[] compileFileArray = compileFileList.Split(' ');
-                                            foreach (string compileFile in compileFileArray)
+                                            if (compileFile.Contains("$(MSBuildProjectName)"))
                                             {
-                                                if (compileFile.Contains("$(MSBuildProjectName)"))
-                                                {
-                                                    compileFilesIncludeProjectName = true;
-                                                }
-                                                string file = compileFile
-                                                    .Replace("$(MSBuildProjectName)", projectName)
-                                                    .Replace("$(MSBuildThisFileName)", projectName)
-                                                    .Replace("$(InteropCommonDir)", "../common/"); // special case for src\tests\Interop\...
-                                                compileFiles.Add(Path.GetFullPath(file, projectDir));
+                                                compileFilesIncludeProjectName = true;
                                             }
+                                            string file = compileFile
+                                                .Replace("$(MSBuildProjectName)", projectName)
+                                                .Replace("$(MSBuildThisFileName)", projectName)
+                                                .Replace("$(InteropCommonDir)", "../common/"); // special case for src\tests\Interop\...
+                                            compileFiles.Add(Path.GetFullPath(file, projectDir));
                                         }
                                     }
-                                    break;
+                                }
+                                break;
 
                                 case "ProjectReference":
+                                {
+                                    string? projectReference = item.Attributes?["Include"]?.Value;
+                                    if (projectReference is not null)
                                     {
-                                        string? projectReference = item.Attributes?["Include"]?.Value;
-                                        if (projectReference is not null)
-                                        {
-                                            projectReferences.Add(Path.GetFullPath(projectReference, projectDir));
-                                        }
+                                        projectReferences.Add(Path.GetFullPath(projectReference, projectDir));
                                     }
-                                    break;
+                                }
+                                break;
                             }
                         }
                     }
@@ -2089,8 +2113,8 @@ namespace ILTransform
                             sourceInfo.NamespaceIdentLine = lineIndex;
                             sourceInfo.MainClassName = namespaceName + "." + sourceInfo.MainClassName;
                         }
-                     }
-                     break;
+                    }
+                    break;
                 }
             }
         }
@@ -2182,6 +2206,16 @@ namespace ILTransform
             }
         }
 
+        // Side effect: Adds to _projectNameMap
+        private void PopulateProjectNameMap()
+        {
+            foreach (TestProject project in _projects)
+            {
+                string simpleName = Path.GetFileNameWithoutExtension(project.RelativePath);
+                Utils.AddToMultiMap(_projectNameMap, simpleName, project);
+            }
+        }
+
         // Side effects: Adds to _classNameMap, adds to _classNameDbgOptMap, sets DeduplicatedNamespaceName
         private void PopulateClassNameMap()
         {
@@ -2265,7 +2299,7 @@ namespace ILTransform
 
             int bestSize = Math.Min(filenameSize, Math.Min(projectSize, dirSize));
             List<string> bestAttempt = new List<string>();
-            
+
             if (bestSize == int.MaxValue)
             {
                 // Try see whether we can merge the results or use some index  
@@ -2403,6 +2437,40 @@ namespace ILTransform
                 }
             }
             */
+        }
+
+        // Side effects: Sets InDebugOptimizeSet
+        private void CheckDebugOptimizeSets()
+        {
+            Dictionary<string, List<TestProject>> potentialDuplicateMap = new Dictionary<string, List<TestProject>>();
+            foreach (TestProject project in _projects)
+            {
+                foreach (string compileFile in project.CompileFiles)
+                {
+                    Utils.AddToMultiMap(potentialDuplicateMap, compileFile, project);
+                }
+            }
+
+            foreach (TestProject project in _projects)
+            {
+                foreach (string compileFile in project.CompileFiles)
+                {
+                    if (potentialDuplicateMap[compileFile].Select(p => p.DebugOptimize).Distinct().Count() > 1)
+                    {
+                        string baseFilename = Path.GetFileNameWithoutExtension(project.AbsolutePath);
+                        if (baseFilename.Contains('_'))
+                        {
+                            string possibleSuffix = baseFilename.Substring(baseFilename.LastIndexOf('_'));
+                            if (s_wrapperGroups.Contains(possibleSuffix))
+                            {
+                                project.DebugOptimizeSuffix = possibleSuffix;
+                            }
+                        }
+                        project.InDebugOptimizeSet = true;
+                        break;
+                    }
+                }
+            }
         }
     }
 }

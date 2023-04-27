@@ -556,8 +556,15 @@ namespace ILTransform
                                 }
                             }
                             int identEnd = charIndex;
-                            TestProject.GetKeyNameRootNameAndSuffix(_testProject.RelativePath, out _, out string sourceName, out _);
-                            if (sourceName != assemblyName)
+                            string newAssemblyName = Path.GetFileNameWithoutExtension(_testProject.RelativePath);
+                            if (_testProject.InDebugOptimizeSet
+                                && (_testProject.DebugOptimizeSuffix != null)
+                                && !_testProject.HasILAssemblyDefineFile)
+                            {
+                                newAssemblyName = "ASSEMBLY_NAME";
+                            }
+
+                            if (newAssemblyName != assemblyName)
                             {
                                 string end = line.Substring(identEnd);
                                 // Check if line was '.assembly foo // as "foo"' and discard it
@@ -567,13 +574,14 @@ namespace ILTransform
                                     end = end.Substring(0, asNameMatch.Index);
                                 }
 
-                                // Simple case - if the original assembly name didn't have quotes and the new
+                                // If the original assembly name didn't have quotes and the new
                                 // assembly name is a substring of it, then the new one doesn't need quotes either.
-                                if (assemblyNameHadQuotes || !assemblyName.Contains(sourceName))
+                                if (TestProject.IdentifierNeedsQuotes(newAssemblyName)
+                                    && (assemblyNameHadQuotes || !assemblyName.Contains(newAssemblyName)))
                                 {
-                                    sourceName = '\'' + sourceName + '\'';
+                                    newAssemblyName = '\'' + newAssemblyName + '\'';
                                 }
-                                line = line.Substring(0, identStart) + sourceName + end;
+                                line = line.Substring(0, identStart) + newAssemblyName + end;
                                 lines[lineIndex] = line;
                                 rewritten = true;
                             }
@@ -644,12 +652,38 @@ namespace ILTransform
 
                 const string compileTag = "<Compile Include";
                 bool containsCompileTag = line.Contains(compileTag);
-                const string quotedMSBuildProjectName = "\"$(MSBuildProjectName).il\"";
+                if (_settings.CleanupILAssembly
+                    && containsCompileTag
+                    && _testProject.IsILProject
+                    && _testProject.InDebugOptimizeSet
+                    && (_testProject.DebugOptimizeSuffix != null)
+                    && !_testProject.HasILAssemblyDefineFile
+                    && !_testProject.AddedILAssemblyDefineFile)
+                {
+                    string newSource =
+                        Path.GetFileNameWithoutExtension(_testProject.CompileFiles[0]) + _testProject.DebugOptimizeSuffix + ".il";
+
+                    InsertIndentedLines(lines, lineIndex, new[] { $"<Compile Include=\"{newSource}\" />" }, lines[lineIndex]);
+                    // Added one line, so default lineIndex++ works
+
+                    string newAbsoluteSource = Path.Combine(Path.GetDirectoryName(_testProject.AbsolutePath)!, newSource);
+                    string projectName = Path.GetFileNameWithoutExtension(_testProject.RelativePath);
+                    if (TestProject.IdentifierNeedsQuotes(projectName))
+                    {
+                        projectName = $"'{projectName}'";
+                    }
+                    File.WriteAllLines(newAbsoluteSource, new[] { $"#define ASSEMBLY_NAME \"{projectName}\"" });
+
+                    rewritten = true;
+                    _testProject.AddedILAssemblyDefineFile = true;
+                    continue;
+                }
                 if (_testProject.IsILProject && containsCompileTag && (_testProject.NewTestClassSourceFile != null))
                 {
                     bool ilMatchesProj =
                         Path.GetFileNameWithoutExtension(_testProject.NewTestClassSourceFile)
                         == Path.GetFileNameWithoutExtension(_testProject.NewAbsolutePath ?? _testProject.AbsolutePath);
+                    const string quotedMSBuildProjectName = "\"$(MSBuildProjectName).il\"";
                     string replaced = ilMatchesProj
                         ? line.Replace(quotedOldSourceName, quotedMSBuildProjectName)
                         : line.Replace(quotedOldSourceName, '"' + Path.GetFileName(_testProject.NewTestClassSourceFile) + '"');
