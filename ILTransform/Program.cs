@@ -160,7 +160,7 @@ namespace ILTransform
                 }
                 else if (settings.DeduplicateProjectNames)
                 {
-                    testStore.FixILFilesWithProjectNames();
+                    testStore.FixFilesWithProjectNames();
                 }
 
                 if (!settings.UnifyDbgRelProjects)

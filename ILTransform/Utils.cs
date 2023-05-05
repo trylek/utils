@@ -4,8 +4,11 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Threading.Tasks;
+
+using Counts = System.Collections.Generic.Dictionary<string, int>;
 
 namespace ILTransform
 {
@@ -247,56 +250,86 @@ namespace ILTransform
             return true;
         }
 
-        // Idea is to convert [dir1A\dir2A\dir3\foo.txt, dir1B\dir2B\dir3\bar.txt] to [dir2, dir2B].
-        // This is broken because is uses the entire dir suffix to look for differences but then
-        // only returns the outermost directory names.  Consider
-        // [dir1A\dir2A\dir3A\A, dir1B\dir2A\dir3B\B, dir1C\dir2B\dir3A\C]
-        // where this will return [dir2A, dir2A, dir2B] but should return either
-        // [dir1A, dir1B, dir1C] or [dir2A\dir3A, dir2A\dir3B, dir2B\dir3A].
-        internal static List<string>? GetNearestDirectoryWithDifferences(List<string> filenames)
+        private static string[]?[] GetComponents(List<string[]> individualComponents, bool[] found, int componentLength)
         {
-            int depth = 1;
-            const int maxDepth = 3;
-            do
-            {
-                HashSet<string> folderCollisions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                bool foundCollision = false;
-                foreach (string filename in filenames)
-                {
-                    string dir = Path.GetDirectoryName(filename)!;
-                    string dirKey = "";
-                    for (int i = 0; i < depth; i++)
-                    {
-                        dirKey += "/" + Path.GetFileName(dir);
-                        dir = Path.GetDirectoryName(dir)!;
-                    }
-                    if (!folderCollisions.Add(dirKey))
-                    {
-                        foundCollision = true;
-                        break;
-                    }
-                }
-                if (!foundCollision)
-                {
-                    break;
-                }
-            }
-            while (++depth <= maxDepth);
+            string[]?[] components = new string[]?[individualComponents.Count];
 
-            // Check that we found one
-            if (depth > maxDepth)
+            for (int i = 0; i < individualComponents.Count; ++i)
             {
-                return null;
+                if (found[i]) continue;
+                string[] ic = individualComponents[i];
+                components[i] =
+                    Enumerable.Range(0, ic.Length - componentLength + 1)
+                              .Reverse()
+                              // The use of '_' is odd here.. the caller wants a single name built from multiple
+                              // directory names, but that detail doesn't belong here.
+                              .Select(start => string.Join('_', new ArraySegment<string>(ic, start, componentLength)))
+                              .ToArray();
             }
 
-            // Extract the 'depth'th directory name
-            IEnumerable<string> extraRootNameEnum = filenames;
-            for (int i = 0; i < depth; ++i)
+            return components;
+        }
+        private static Counts BuildComponentCounts(IEnumerable<IEnumerable<string>?> components)
+            => components.Where(f => f != null).SelectMany(f => f!).GroupBy(c => c).ToDictionary(g => g.Key, g => g.Count());
+        private static void ReduceComponentCounts(Counts counts, string[] components)
+            => components.ToList().ForEach(c => counts[c]--);
+
+        // An overly complicated function that extracts unique substrings (subpaths) from a list
+        // of paths.  It looks for unique path components, starting from length 1 (so just a single
+        // directory name in the path) and growing from there.  For each length, it tries the end
+        // of the path first.
+        public static List<string> GetUniqueSubsets(List<string> filenames)
+        {
+            bool[] found = new bool[filenames.Count];
+
+            // Break each path into a list of directories
+            List<string[]> individualComponents = filenames.Select(f => f.Split(Path.DirectorySeparatorChar)).ToList();
+
+            List<string?> results = Enumerable.Repeat<string?>(null, filenames.Count).ToList();
+
+            for (int componentLength = 1; !found.All(b =>b); ++componentLength)
             {
-                extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetDirectoryName(n)!);
+                // For each path, get all subpaths of length 'componentLength'
+                string[]?[] components = GetComponents(individualComponents, found, componentLength);
+
+                Counts counts = BuildComponentCounts(components);
+                bool changed;
+
+                do
+                {
+                    changed = false;
+
+                    // Search for unique subpaths
+                    for (int i = 0; i < components.Length; ++i)
+                    {
+                        if (found[i]) { continue; }
+                        foreach (string component in components[i]!)
+                        {
+                            if (counts[component] == 1)
+                            {
+                                changed = true;
+                                results[i] = component;
+                                break;
+                            }
+                        }
+                    }
+
+                    // AFTER finding all unique subpaths for the current length,
+                    // decrement the counts.  This avoids "false unique" answers.
+                    // E.g, with [A\C, A\C2, B\C2], we first select C for A\C but
+                    // avoid then selecting A for A\C2.  We don't do any checks like
+                    // this across sizes.
+                    for (int i = 0; i < components.Length; ++i)
+                    {
+                        if (found[i]) { continue; }
+                        if (results[i] == null) { continue; }
+
+                        ReduceComponentCounts(counts, components[i]!);
+                        found[i] = true;
+                    }
+                } while (changed);
             }
-            extraRootNameEnum = extraRootNameEnum.Select(n => Path.GetFileName(n));
-            return extraRootNameEnum.ToList()!;
+            return results!;
         }
 
         public static bool IsMatchOrOutOfRange(string str1, int index1, string str2, int index2)

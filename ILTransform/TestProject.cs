@@ -621,7 +621,6 @@ namespace ILTransform
             "DisableProjectBuild", // no runtime considerations - it's either there or not
             "RestorePackages",
             "TargetFramework", //! VERIFY
-            "ReferenceXUnitWrapperGenerator", //! VERIFY -- according a test comment, this should block Main->TestEntryPoint, etc.
             "EnableUnsafeBinaryFormatterSerialization", //! VERIFY
         };
 
@@ -864,8 +863,9 @@ namespace ILTransform
 
             _projects.Where(p => p.InDebugOptimizeSet)
                 .Where(p => p.DebugOptimizeSuffix == null)
+                .Select(p => p.AbsolutePath)
                 .ToList()
-                .ForEach(p => Console.WriteLine($"{p.AbsolutePath} is in a dbg/opt set with a nonstandard base filename suffix"));
+                .ForEach(writer.WriteLine);
 
             writer.WriteLine();
         }
@@ -1236,6 +1236,11 @@ namespace ILTransform
             return null;
         }
 
+        // Attempts to detect a case like
+        // foo\bar\baz.csproj
+        // foo\bar\Desktop\baz.csproj
+        // The difference is the suffix "Desktop", so leave the first project alone
+        // and rename the second to baz_Desktop.
         public static List<string>? DedupSuffixDirProj(List<string> projectDirs)
         {
             List<string> suffixes = new();
@@ -1251,44 +1256,43 @@ namespace ILTransform
 
         private List<string>? DedupDirProj(List<TestProject> projectList)
         {
-            List<string>? differences = Utils.GetNearestDirectoryWithDifferences(projectList.Select(p => p.AbsolutePath).ToList());
+            List<string>? differences = Utils.GetUniqueSubsets(projectList.Select(p => Path.GetDirectoryName(p.RelativePath)).ToList());
             if (differences == null)
             {
                 Console.WriteLine("No collision found for duplicate project names:");
-                projectList.ForEach(p => Console.WriteLine($"  {p.AbsolutePath}"));
+                projectList.ForEach(p => Console.WriteLine($"  {p.RelativePath}"));
                 return null;
             }
             return Utils.TrimSharedTokens(differences!);
         }
 
-        // Update IL filenames for each compile il using project name (as "$(MSBuildProjectName)")
-        public void FixILFilesWithProjectNames()
+        // Update source filenames referenced by $(MSBuildProjectName) when the project file was renamed
+        public void FixFilesWithProjectNames()
         {
             foreach (TestProject testProject in _projects.Where(p => p.NewAbsolutePath != null && p.CompileFilesIncludeProjectName))
             {
-                FixILFileName(testProject);
+                FixFileName(testProject);
             }
         }
 
         public void FixILFileNames()
         {
-            foreach (TestProject testProject in _projects)
+            foreach (TestProject testProject in _projects.Where(p => p.IsILProject))
             {
-                FixILFileName(testProject);
+                FixFileName(testProject);
             }
         }
 
         // Side effects: renames <NewTestClassSourceFile>, sets NewTestClassSourceFile and CompileFiles[0]
-        private void FixILFileName(TestProject testProject)
+        private void FixFileName(TestProject testProject)
         {
-            if (!testProject.IsILProject) return;
             if (string.IsNullOrEmpty(testProject.MainClassSourceFile)) return;
 
             string projectName = Path.GetFileNameWithoutExtension(testProject.RelativePath);
 
             string dir = Path.GetDirectoryName(testProject.MainClassSourceFile)!;
             string rootName = Path.GetFileNameWithoutExtension(testProject.MainClassSourceFile);
-            string extension = Path.GetExtension(testProject.MainClassSourceFile); // should be .il
+            string extension = Path.GetExtension(testProject.MainClassSourceFile);
 
             TestProject.GetKeyNameRootNameAndSuffix(
                 testProject.NewAbsolutePath ?? testProject.AbsolutePath,
@@ -2288,7 +2292,7 @@ namespace ILTransform
 
             List<string> filenameAttempt = representativeProjects.Select(p => Path.GetFileNameWithoutExtension(p.Item2.MainClassSourceFile)).ToList();
             List<string> projectAttempt = representativeProjects.Select(p => Path.GetFileNameWithoutExtension(p.Item1)).ToList();
-            List<string>? dirAttempt = Utils.GetNearestDirectoryWithDifferences(representativeProjects.Select(p => p.Item2.AbsolutePath).ToList());
+            List<string>? dirAttempt = Utils.GetUniqueSubsets(representativeProjects.Select(p => p.Item2.AbsolutePath).ToList());
             if (dirAttempt != null)
             {
                 dirAttempt = Utils.TrimSharedTokens(dirAttempt);
