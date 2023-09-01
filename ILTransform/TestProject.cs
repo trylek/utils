@@ -230,6 +230,10 @@ namespace ILTransform
             if (force)
             {
                 int charIndex = line.SkipWhiteSpace();
+                if (charIndex < line.Length && line[charIndex] == '[')
+                {
+                    return true;
+                }
                 if (isILTest)
                 {
                     // They always start like .method or .class but might end without spaces
@@ -530,11 +534,11 @@ namespace ILTransform
             => GetKeyNameRootNameAndSuffix(RelativePath, out keyName, out rootName, out suffix);
 
         [return: NotNullIfNotNull("defaultValue")]
-        private string? GetProperty(string name, string? defaultValue = "")
+        public string? GetProperty(string name, string? defaultValue = "")
             => AllProperties.TryGetValue(name, out string? property) ? property : defaultValue;
 
-        private bool HasProperty(string name) => AllProperties.ContainsKey(name);
-        private bool HasItemGroup(string name) => AllItemGroups.Contains(name);
+        public bool HasProperty(string name) => AllProperties.ContainsKey(name);
+        public bool HasItemGroup(string name) => AllItemGroups.Contains(name);
 
         private static string SanitizeFileName(string fileName, string projectPath)
         {
@@ -1256,7 +1260,7 @@ namespace ILTransform
 
         private List<string>? DedupDirProj(List<TestProject> projectList)
         {
-            List<string>? differences = Utils.GetUniqueSubsets(projectList.Select(p => Path.GetDirectoryName(p.RelativePath)).ToList());
+            List<string>? differences = Utils.GetUniqueSubsets(projectList.Select(p => Path.GetDirectoryName(p.RelativePath)).ToList()!);
             if (differences == null)
             {
                 Console.WriteLine("No collision found for duplicate project names:");
@@ -1323,145 +1327,67 @@ namespace ILTransform
             }
         }
 
-        // Side effects: Creates cs/csproj files
-        public void GenerateAllWrappers(string outputDir)
+        // Side effects: Creates Directory.Build.targets / props files, modifies csproj project files
+        public void GenerateAllWrappers(string rootDir)
         {
-            HashSet<DebugOptimize> debugOptimizeMap = new HashSet<DebugOptimize>();
-            foreach (TestProject testProject in _projects)
+            string mergedPropsDir = rootDir;
+            while (!File.Exists(Path.Combine(mergedPropsDir, "Directory.Merged.props")))
             {
-                debugOptimizeMap.Add(testProject.DebugOptimize);
+                mergedPropsDir = Path.GetDirectoryName(mergedPropsDir)!;
             }
-            foreach (DebugOptimize debugOpt in debugOptimizeMap.OrderBy(d => d))
-            {
-                GenerateWrapper(outputDir, debugOpt, maxProjectsPerWrapper: 100);
-            }
+            string relativeRoot = Path.GetRelativePath(mergedPropsDir, rootDir);
+            string mergedProjectName = Path.Combine(rootDir, relativeRoot.Replace('\\', '-') + ".csproj");
+
+            StringBuilder propsFile = new StringBuilder();
+            propsFile.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
+            propsFile.AppendLine("<Project ToolsVersion=\"12.0\" DefaultTargets=\"Build\" xmlns=\"http://schemas.microsoft.com/developer/msbuild/2003\">");
+            propsFile.AppendLine("  <Import Project=\"$([MSBuild]::GetPathOfFileAbove('Directory.Merged.props', $(MSBuildThisFileDirectory)..))\" />");
+            propsFile.AppendLine("  <Import Project=\"$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', $(MSBuildThisFileDirectory)..))\" />");
+            propsFile.AppendLine();
+            propsFile.AppendLine("  <PropertyGroup>");
+            propsFile.AppendLine("    <RunAnalyzers>true</RunAnalyzers>");
+            propsFile.AppendLine("    <NoWarn>$(NoWarn);xUnit1013</NoWarn>");
+            propsFile.AppendLine("    <EnableNETAnalyzers>false</EnableNETAnalyzers>");
+            propsFile.AppendLine("  </PropertyGroup>");
+            propsFile.AppendLine("</Project>");
+
+            string directoryBuildPropsFile = Path.Combine(rootDir, "Directory.Build.props");
+            Console.WriteLine("Emitting file: {0}", directoryBuildPropsFile);
+            File.WriteAllText(directoryBuildPropsFile, propsFile.ToString());
+
+            StringBuilder targetsFile = new StringBuilder();
+            targetsFile.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
+            targetsFile.AppendLine("  <ItemGroup>");
+            targetsFile.AppendLine("    <MergedWrapperProjectReference Include=\"*/**/.??proj\" />");
+            targetsFile.AppendLine("  </ItemGroup>");
+            targetsFile.AppendLine();
+            targetsFile.AppendLine("  <Import Project=\"$(TestSourceDir)MergedTestRunner.targets\" />");
+            targetsFile.AppendLine("</Project>");
+
+            Console.WriteLine("Emitting file: {0}", mergedProjectName);
+            File.WriteAllText(mergedProjectName, targetsFile.ToString());
         }
 
-        // Side effects: Creates cs/csproj files
-        private void GenerateWrapper(string rootDir, DebugOptimize debugOptimize, int maxProjectsPerWrapper)
+        private void RewriteProjectFileAsMergedWithProcessIsolation(TestProject project)
         {
-            string dbgOptName = "Dbg" + debugOptimize.Debug + "_Opt" + debugOptimize.Optimize;
-            string outputDir = Path.Combine(rootDir, dbgOptName);
-
-            Directory.CreateDirectory(outputDir);
-
-            foreach (string preexistingFile in Directory.GetFiles(outputDir))
+            List<string> lines = File.ReadAllLines(project.AbsolutePath).ToList();
+            for (int lineIndex = 0; lineIndex < lines.Count; lineIndex++)
             {
-                File.Delete(preexistingFile);
-            }
-
-            TestProject[] projects = _projects.Where(p => p.DebugOptimize.Equals(debugOptimize)).ToArray();
-            for (int firstProject = 0; firstProject < projects.Length; firstProject += maxProjectsPerWrapper)
-            {
-                string nameBase = dbgOptName;
-                if (projects.Length > maxProjectsPerWrapper)
+                string line = lines[lineIndex];
+                if (line.Contains("<OutputType>"))
                 {
-                    nameBase += $"_{firstProject}";
-                }
-
-                TestProject[] projectGroup = projects[firstProject..Math.Min(projects.Length, firstProject + maxProjectsPerWrapper)];
-
-                string wrapperSourceName = nameBase + ".cs";
-                string wrapperSourcePath = Path.Combine(outputDir, wrapperSourceName);
-
-                string wrapperProjectName = nameBase + ".csproj";
-                string wrapperProjectPath = Path.Combine(outputDir, wrapperProjectName);
-
-                using (StreamWriter writer = new StreamWriter(wrapperSourcePath))
-                {
-                    foreach (TestProject project in projectGroup.Where(p => p.MainClassName != ""))
+                    lines.RemoveAt(lineIndex--);
+                    if (project.GetProperty("RequiresProcessIsolation") != "true")
                     {
-                        writer.WriteLine("extern alias " + project.TestProjectAlias + ";");
+                        int indentCount = line.SkipWhiteSpace();
+                        string indentString = new string(' ', indentCount);
+                        lines.Insert(++lineIndex, indentString + "<!-- Flag injected automatically, process isolation may not be actually required -->");
+                        lines.Insert(++lineIndex, indentString + "<RequiresProcessIsolation>true</RequiresProcessIsolation>");
+                        lines.Insert(++lineIndex, "");
                     }
-                    writer.WriteLine();
-
-                    writer.WriteLine("using System;");
-                    writer.WriteLine();
-
-                    writer.WriteLine("public static class " + dbgOptName);
-                    writer.WriteLine("{");
-                    writer.WriteLine("    private static int s_passed = 0;");
-                    writer.WriteLine("    private static int s_noClass = 0;");
-                    writer.WriteLine("    private static int s_exitCode = 0;");
-                    writer.WriteLine("    private static int s_crashed = 0;");
-                    writer.WriteLine("    private static int s_total = 0;");
-                    writer.WriteLine();
-                    writer.WriteLine("    public static int Main(string[] args)");
-                    writer.WriteLine("    {");
-
-                    foreach (TestProject project in projectGroup)
-                    {
-                        string testName = project.RelativePath.Replace('\\', '/');
-                        if (project.MainClassName != "")
-                        {
-                            writer.WriteLine("        TryTest(\"" + testName + "\", " + project.TestProjectAlias + "::" + project.MainClassName + ".TestEntryPoint, args);");
-                        }
-                        else
-                        {
-                            writer.WriteLine("        Console.WriteLine(\"Skipping test: '" + testName + "' - no class name\");");
-                            writer.WriteLine("        s_total++;");
-                            writer.WriteLine("        s_noClass++;");
-                        }
-                    }
-
-                    writer.WriteLine("        Console.WriteLine(\"Total tests: {0}; {1} passed; {2} missing class name; {3} returned wrong exit code; {4} crashed\", s_total, s_passed, s_noClass, s_exitCode, s_crashed);");
-                    writer.WriteLine("        return s_crashed != 0 ? 1 : s_exitCode != 0 ? 2 : 100;");
-                    writer.WriteLine("    }");
-                    writer.WriteLine();
-                    writer.WriteLine("    private static void TryTest(string testName, Func<string[], int> testFn, string[] args)");
-                    writer.WriteLine("    {");
-                    writer.WriteLine("        try");
-                    writer.WriteLine("        {");
-                    writer.WriteLine("            s_total++;");
-                    writer.WriteLine("            int exitCode = testFn(args);");
-                    writer.WriteLine("            if (exitCode == 100)");
-                    writer.WriteLine("            {");
-                    writer.WriteLine("                Console.WriteLine(\"Test succeeded: '{0}'\", testName);");
-                    writer.WriteLine("                s_passed++;");
-                    writer.WriteLine("            }");
-                    writer.WriteLine("            else");
-                    writer.WriteLine("            {");
-                    writer.WriteLine("                Console.Error.WriteLine(\"Wrong exit code: '{0}' - {1}\", testName, exitCode);");
-                    writer.WriteLine("                s_exitCode++;");
-                    writer.WriteLine("            }");
-                    writer.WriteLine("        }");
-                    writer.WriteLine("        catch (Exception ex)");
-                    writer.WriteLine("        {");
-                    writer.WriteLine("            Console.Error.WriteLine(\"Test crashed: '{0}' - {1}\", testName, ex.Message);");
-                    writer.WriteLine("            s_crashed++;");
-                    writer.WriteLine("        }");
-                    writer.WriteLine("    }");
-                    writer.WriteLine("}");
-                }
-
-                using (StreamWriter writer = new StreamWriter(wrapperProjectPath))
-                {
-                    writer.WriteLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
-                    writer.WriteLine("    <PropertyGroup>");
-                    writer.WriteLine("        <OutputType>Exe</OutputType>");
-                    writer.WriteLine("        <CLRTestKind>BuildAndRun</CLRTestKind>");
-                    writer.WriteLine("    </PropertyGroup>");
-                    writer.WriteLine("    <ItemGroup>");
-                    writer.WriteLine("        <Compile Include=\"" + wrapperSourceName + "\" />");
-                    writer.WriteLine("    </ItemGroup>");
-                    writer.WriteLine("    <ItemGroup>");
-                    HashSet<string> transitiveDependencies = new HashSet<string>();
-                    foreach (TestProject project in projectGroup)
-                    {
-                        string relativePath = Path.GetRelativePath(outputDir, project.AbsolutePath);
-                        writer.WriteLine("        <ProjectReference Include=\"" + relativePath + "\" Aliases=\"" + project.TestProjectAlias + "\" />");
-                        transitiveDependencies.UnionWith(project.ProjectReferences);
-                    }
-                    foreach (string transitiveDependency in transitiveDependencies)
-                    {
-                        string relativePath = Path.GetRelativePath(outputDir, transitiveDependency);
-                        writer.WriteLine("        <ProjectReference Include=\"" + relativePath + "\" />");
-                    }
-
-                    writer.WriteLine("    </ItemGroup>");
-                    writer.WriteLine("</Project>");
                 }
             }
+            File.WriteAllLines(project.AbsolutePath, lines);
         }
 
         // Side effect: Add TestProjects to _projects

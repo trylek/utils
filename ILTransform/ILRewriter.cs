@@ -613,7 +613,10 @@ namespace ILTransform
 
                 // Add RequiresProcessIsolation to first PropertyGroup.
                 // Do this before the OutputType removal, which might remove the first PropertyGroup.
-                if (_settings.AddProcessIsolation && _testProject.NeedsRequiresProcessIsolation && !hasRequiresProcessIsolation)
+                if (_settings.AddProcessIsolation 
+                    && _testProject.OutputType.Equals("Exe", StringComparison.OrdinalIgnoreCase)
+                    && (_testProject.NeedsRequiresProcessIsolation || !string.IsNullOrEmpty(_settings.ForceProcessIsolationReason)) 
+                    && !hasRequiresProcessIsolation)
                 {
                     if (line.Contains("<PropertyGroup"))
                     {
@@ -622,7 +625,12 @@ namespace ILTransform
                         // If there's a line indented with the PropertyGroup, use that.  Otherwise just add 2 spaces.
                         string modelLine = (nextIndent > indent) ? lines[lineIndex + 1] : "  " + line;
 
-                        string commentLine = $"<!-- Needed for {string.Join(", ", _testProject.RequiresProcessIsolationReasons)} -->";
+                        string reasons = string.Join(", ", _testProject.RequiresProcessIsolationReasons);
+                        if (string.IsNullOrEmpty(reasons))
+                        {
+                            reasons = _settings.ForceProcessIsolationReason;
+                        }
+                        string commentLine = $"<!-- Needed for {reasons} -->";
                         List<string> insertLines = new List<string>() { commentLine };
                         insertLines.AddRange(s_processIsolationLines);
                         // "+ 1" to add after the line.  Then "- 1" to reset to the last inserted line

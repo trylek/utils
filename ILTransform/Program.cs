@@ -17,6 +17,7 @@ namespace ILTransform
         public bool MakePublic;
         public bool CollapseMainLines; // should be used alone as it breaks most of the indexes
         public bool AddProcessIsolation;
+        public string ForceProcessIsolationReason = "";
         public bool UnifyDbgRelProjects;
         public bool CleanupILModule;
         public bool CleanupILAssembly;
@@ -96,6 +97,10 @@ namespace ILTransform
                         else if (arg == "-w")
                         {
                             settings.GenerateWrappers = true;
+                            settings.AddILFactAttributes = true;
+                            settings.AddProcessIsolation = true;
+                            settings.MakePublic = true;
+                            settings.ForceProcessIsolationReason = "mechanical merging of all remaining tests, this particular project may not actually need process isolation";
                         }
                         else
                         {
@@ -169,7 +174,7 @@ namespace ILTransform
                 }
                 if (settings.GenerateWrappers)
                 {
-                    testStore.GenerateAllWrappers(wrapperRoot);
+                    testStore.GenerateAllWrappers(testRoots[0]);
                 }
 
                 using (StreamWriter log = new StreamWriter(logPath))
