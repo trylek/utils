@@ -246,7 +246,7 @@ namespace ILTransform
                         int lastMainMethodBodyLine = _testProject.LastMainMethodBodyLine + 1;
                         int lastMainMethodBodyColumn = _testProject.LastMainMethodBodyColumn;
                         string line = lines[lastMainMethodBodyLine];
-                        if (lastMainMethodBodyColumn == line.Length)
+                        if (lastMainMethodBodyColumn >= line.Length)
                         {
                             lines.Insert(lastMainMethodBodyLine + 1, "}");
                         }

@@ -1358,7 +1358,7 @@ namespace ILTransform
             StringBuilder targetsFile = new StringBuilder();
             targetsFile.AppendLine("<Project Sdk=\"Microsoft.NET.Sdk\">");
             targetsFile.AppendLine("  <ItemGroup>");
-            targetsFile.AppendLine("    <MergedWrapperProjectReference Include=\"*/**/.??proj\" />");
+            targetsFile.AppendLine("    <MergedWrapperProjectReference Include=\"*/**/*.??proj\" />");
             targetsFile.AppendLine("  </ItemGroup>");
             targetsFile.AppendLine();
             targetsFile.AppendLine("  <Import Project=\"$(TestSourceDir)MergedTestRunner.targets\" />");
