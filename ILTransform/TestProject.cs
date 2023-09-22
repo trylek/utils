@@ -2165,11 +2165,14 @@ namespace ILTransform
                     Utils.AddToMultiMap(_classNameMap, typeName, project);
                     Utils.AddToNestedMultiMap(_classNameDbgOptMap, typeName, project.DebugOptimize, project);
 
-                    project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
-                    string projectWithoutSuffix = Path.Combine(
-                        Path.GetDirectoryName(project.AbsolutePath)!,
-                        rootName + Path.GetExtension(project.AbsolutePath));
-                    Utils.AddToNestedMultiMap(classNameRootProjectNameMap, typeName, projectWithoutSuffix, project);
+                    if (project.CLRTestKind != "BuildOnly")
+                    {
+                        project.GetKeyNameRootNameAndSuffix(out _, out string rootName, out _);
+                        string projectWithoutSuffix = Path.Combine(
+                            Path.GetDirectoryName(project.AbsolutePath)!,
+                            rootName + Path.GetExtension(project.AbsolutePath));
+                        Utils.AddToNestedMultiMap(classNameRootProjectNameMap, typeName, projectWithoutSuffix, project);
+                    }
                 }
 
                 foreach (string file in project.CompileFiles)
@@ -2274,6 +2277,7 @@ namespace ILTransform
             foreach ((TestProject project, string newNamespace) in representativeProjects.Select(p => p.Item2).Zip(bestAttempt))
             {
                 project.DeduplicatedNamespaceName = TestProject.SanitizeIdentifier(InterestingNamespace(project) + newNamespace, isIL: project.IsILProject);
+                Debug.Assert(!string.IsNullOrEmpty(project.DeduplicatedNamespaceName));
             }
 
             // Propagate DeduplicatedNamespaceName to the other projects with the same root
